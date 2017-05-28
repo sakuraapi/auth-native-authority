@@ -1,0 +1,54 @@
+{
+  "name": "@sakuraapi/auth-native-authority",
+  "version": "0.1.0",
+  "description": "Middleware to support native authentication capabilities",
+  "main": "lib/index.js",
+  "types": "lib/index.d.js",
+  "files": [
+    "**/!(*.spec).js",
+    "**/!(*.spec).d.ts",
+    "!spec/**/*",
+    "!docs/**/*",
+    "lib/**"
+  ],
+  "scripts": {
+    "build": "rm -rf lib/ ; tsc",
+    "nsp": "nsp",
+    "prepublish": "npm build && npm test && npm run nsp check",
+    "test": "echo \"Error: no test specified\"",
+    "tsc": "tsc"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sakuraapi/auth-native-authority.git"
+  },
+  "keywords": [
+    "SakuraApi",
+    "native",
+    "authentication"
+  ],
+  "author": "Jean-Pierre E. Poveda",
+  "license": "BSD-3-Clause",
+  "bugs": {
+    "url": "https://github.com/sakuraapi/auth-native-authority/issues"
+  },
+  "homepage": "https://github.com/sakuraapi/auth-native-authority#readme",
+  "devDependencies": {
+    "@types/bcrypt": "^1.0.0",
+    "@types/express": "^4.0.35",
+    "@types/jsonwebtoken": "^7.2.0",
+    "@types/mongodb": "^2.2.2",
+    "@types/uuid": "^2.0.29",
+    "jasmine": "^2.6.0",
+    "nsp": "^2.6.3"
+  },
+  "dependencies": {
+    "@sakuraapi/api": "0.6.4",
+    "bcrypt": "^1.0.2",
+    "install": "^0.10.1",
+    "jsonwebtoken": "^7.4.1",
+    "mongodb": "^2.2.27",
+    "npm": "^4.6.1",
+    "uuid": "^3.0.1"
+  }
+}
