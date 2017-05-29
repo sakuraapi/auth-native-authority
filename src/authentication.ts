@@ -10,16 +10,23 @@ import {
   SakuraApiRoutable
 } from '@sakuraapi/api';
 import {
+  Handler,
   NextFunction,
   Request,
   Response
 } from 'express';
-import {compare} from 'bcrypt';
+import {
+  compare,
+  hash
+} from 'bcrypt';
 import {
   decode as decodeToken,
   sign as signToken
 } from 'jsonwebtoken';
-import {createHmac} from 'crypto';
+import {
+  createHmac,
+  randomBytes
+} from 'crypto';
 import {v4 as uuid} from 'uuid';
 import {ObjectID} from 'mongodb';
 
@@ -58,6 +65,19 @@ export interface IAuthenticationAuthorityOptions {
    */
   bcryptHashRounds?: number;
   /**
+   * Configuration for user creation
+   */
+  create?: {
+    /**
+     * An object of key / value pairs defining custom fields to store in the user collectiion. By default email and password
+     * are stored (they're required) and domain is stored (if the feature is enabled). The keys should be the expected field
+     * names in the json body. The values should be the database field names where the field should be stored. If you want to
+     * have custom validation or manipulation of these fields, use [[onBeforeUserCreate]] and modify the `res.locals.reqBody`
+     * object.
+     */
+    acceptFields?: any;
+  };
+  /**
    * Lets you override the DB and JSON field names that the auth-native-authority plugin uses.
    */
   model?: {
@@ -71,6 +91,14 @@ export interface IAuthenticationAuthorityOptions {
     },
     password?: {
       dbField?: string;
+    },
+    emailVerified: {
+      dbField?: string;
+      jsonField?: string;
+    },
+    emailVerificationKey: {
+      dbField?: string;
+      jsonField?: string;
     }
   }
   /**
@@ -80,7 +108,21 @@ export interface IAuthenticationAuthorityOptions {
    * @param payload
    * @param dbResult
    */
-  payloadInjector?: (payload: any, dbResult: any) => Promise<any>;
+  onJWTPayloadInject?: (payload: any, dbResult: any) => Promise<any>;
+
+  /**
+   * Accepts a Express Handler, or an array of them, to run before user creation. This is helpful if you want to do
+   * custom validation.
+   */
+  onBeforeUserCreate?: Handler | Handler[];
+
+  /**
+   * Receives an object of the user just created. Of greatest importance here is validation key. You need to generate
+   * an email and send that to the user in order for them to verify that they have access to the email address they're
+   * claiming.
+   * @param newUser an object of the user just created, minus the hashed password field.
+   */
+  onUserCreated: (newUser: any) => Promise<any>;
 }
 
 /**
@@ -143,10 +185,33 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
     passwordDb: ((options.model || <any>{}).password || <any>{}).dbField
     || ((nativeAuthConfig.model || <any>{}).password || <any>{}).dbField
-    || 'pw'
+    || 'pw',
+
+    emailVerifiedDb: ((options.model || <any>{}).emailVerified || <any>{}).dbField
+    || ((nativeAuthConfig.model || <any>{}).emailVerified || <any>{}).dbField
+    || 'emailVerified',
+
+    emailValidatedJson: ((options.model || <any>{}).emailVerified || <any>{}).jsonField
+    || ((nativeAuthConfig.model || <any>{}).emailVerified || <any>{}).jsonField
+    || 'emailVerified',
+
+    emailVerificationKeyDb: ((options.model || <any>{}).emailVerificationKey || <any>{}).dbField
+    || ((nativeAuthConfig.model || <any>{}).emailVerificationKey || <any>{}).dbField
+    || 'emailVerificationKey',
+
+    emailVerificationKeyJson: ((options.model || <any>{}).emailVerificationKey || <any>{}).jsonField
+    || ((nativeAuthConfig.model || <any>{}).emailVerificationKey || <any>{}).jsonField
+    || 'emailVerificationKey',
+
   };
 
-  @Model(sapi, {dbConfig: options.userDbConfig})
+  @Model(sapi, {
+    dbConfig: {
+      collection: options.userDbConfig.collection,
+      db: options.userDbConfig.db,
+      promiscuous: true
+    }
+  })
   class User extends SakuraApiModel {
     @Db(fields.emailDb) @Json(fields.emailJson)
     email: string;
@@ -156,6 +221,12 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
     @Db({field: fields.passwordDb, private: true})
     password: string;
+
+    @Db(fields.emailVerifiedDb) @Json(fields.emailValidatedJson)
+    emailVerified = false;
+
+    @Db(fields.emailVerificationKeyDb) @Json(fields.emailVerificationKeyJson)
+    emailVerifiedKey: string;
   }
 
   @Model(sapi, {
@@ -196,6 +267,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     @Db() @Json()
     invalidated = false;
 
+    @Db() @Json()
+    audience: any[] = [];
   }
 
   @Routable(sapi, {baseUrl: 'auth/native', model: User, suppressApi: true})
@@ -228,76 +301,86 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         [fields.domainDb]: domain
       };
 
+      let dbDoc;
+      let userInfo;
+
       User
         .getCursor(query)
         .limit(1)
         .next()
-        .then((dbDoc) => {
-          const userInfo = User.fromDb(dbDoc);
+        .then((result) => {
+          dbDoc = result;
+          userInfo = User.fromDb(dbDoc);
 
           if (!userInfo) {
-            locals.send(401, {error: 'login failed'});
-            return next();
+            locals.send(401, {error: 'login_failed'});
+            throw 401;
+          }
+        })
+        .then(() => compare(password, userInfo.password))
+        .then((pwMatch) => {
+          if (!pwMatch) {
+            locals.send(401, {error: 'login_failed'});
+            throw 401;
           }
 
-          return compare(password, userInfo.password)
-            .then((pwMatch) => {
-              if (!pwMatch) {
-                locals.send(401, {error: 'login failed'});
-                return next();
+          if (!userInfo.emailVerified) {
+            locals.send(403, {error: 'email_validation_required'});
+            throw 403;
+          }
+
+          const payload = {
+            [fields.emailJson]: email,
+            [fields.domainJson]: domain,
+          };
+
+          // Allows the inclusion of other fields from the User collection
+          const fieldInclusion = ((sapi.config.authentication || <any>{}).jwt || <any>{}).fields;
+          if (fieldInclusion) {
+            for (const dbbField of Object.keys(fieldInclusion)) {
+              const payloadField = fieldInclusion[dbbField];
+
+              if (typeof payloadField !== 'string') {
+                return Promise
+                  .reject(new Error('unable to proceed, server misconfiguration. authentication.jwt.fields must be' +
+                    `a key value pair of strings. key '${dbbField}' has a value typeof '${typeof payloadField}'`));
               }
+              payload[payloadField] = dbDoc[dbbField];
+            }
+          }
 
-              const payload = {
-                [fields.emailJson]: email,
-                [fields.domainJson]: domain,
-              };
-
-              // Allows the inclusion of other fields from the User collection
-              const fieldInclusion = ((sapi.config.authentication || <any>{}).jwt || <any>{}).fields;
-              if (fieldInclusion) {
-                for (const dbbField of Object.keys(fieldInclusion)) {
-                  const payloadField = fieldInclusion[dbbField];
-
-                  if (typeof payloadField !== 'string') {
-                    locals.send(500, {error: 'internal_error:server_misconfigured'});
-                    return next(new Error('unable to proceed, server misconfiguration. authentication.jwt.fields must be' +
-                      `a key value pair of strings. key '${dbbField}' has a value typeof '${typeof payloadField}'`));
-                  }
-                  payload[payloadField] = dbDoc[dbbField];
-                }
-              }
-
-              // Integrator provided function that injects arbitrary fields into the payload from "other" sources
-              if (options.payloadInjector) {
-                options
-                  .payloadInjector(payload, dbDoc)
-                  .then((updatedPayload) => {
-                    finalizeToken(updatedPayload, userInfo);
-                  })
-                  .catch((err) => {
-                    locals.send(500, 'internal_error:payload_injection_failed');
-                    next(err);
-                  });
-              } else {
-                finalizeToken(payload, userInfo);
-              }
-            })
+          // Integrator provided function that injects arbitrary fields into the payload from "other" sources
+          if (options.onJWTPayloadInject) {
+            return options
+              .onJWTPayloadInject(payload, dbDoc)
+              .then((updatedPayload) => {
+                return updatedPayload
+              });
+          } else {
+            return payload;
+          }
         })
+        .then(buildJwtToken)
+        .then((token) => locals.send(200, {token}))
+        .then(() => next())
         .catch((err) => {
+          if (err === 401 || err === 403) {
+            return next();
+          }
           locals.send(500, {error: 'internal_server_error'});
           return next(err);
         });
 
       //////////
-      function finalizeToken(payload, userInfo) {
-        const key = ((sapi.config.authentication || <any>{}).jwt || <any>{}).key;
-        const issuer = ((sapi.config.authentication || <any>{}).jwt || <any>{}).issuer;
-        const exp = ((sapi.config.authentication || <any>{}).jwt || <any>{}).exp || '48h';
+      function buildJwtToken(payload) {
+        const key = jwtAuthConfig.key;
+        const issuer = jwtAuthConfig.issuer;
+        const exp = jwtAuthConfig.exp || '48h';
 
         if (!key || key === '' || !issuer || issuer === '') {
-          locals.send(500, {error: 'internal_error:server_misconfigured'});
-          return next(new Error(`unable to proceed, server misconfiguration. authentication.jwt.key value?: '${key}', `
-            + `authentication.jwt.issuer value?: '${issuer}'. These are required fields.`));
+          return Promise
+            .reject(new Error(`unable to proceed, server misconfiguration. authentication.jwt.key value?: '${key}', `
+              + `authentication.jwt.issuer value?: '${issuer}'. These are required fields.`));
         }
 
         // self sign the payload - the issuer should never trust a token passed to it by an audience server since
@@ -319,13 +402,12 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         wait.push(generateToken(key, issuer, issuer, exp, payload, jti));
         audiences.push(issuer);
 
-        const audienceConfig = ((sapi.config.authentication || <any>{}).jwt || <any>{}).audiences;
+        const audienceConfig = jwtAuthConfig.audiences;
         if (audienceConfig) {
           for (const jwtAudience of Object.keys(audienceConfig)) {
             const audienceKey = audienceConfig[jwtAudience];
             if (typeof audienceKey !== 'string') {
-              locals.send(500, {error: 'internal_error:server_misconfigured'});
-              return next(new Error('Invalid authentication.jwt.audiences key defined. The value must be a '
+              return Promise.reject(new Error('Invalid authentication.jwt.audiences key defined. The value must be a '
                 + 'secret key in the form of a string.'));
             }
 
@@ -334,39 +416,36 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           }
         }
 
-        Promise
+        return Promise
           .all(wait)
-          .then((results) => {
+          .then((jwtTokens) => {
             const token = {};
 
             let i = 0;
-            for (const result of results) {
-              token[audiences[i]] = results[i];
+            for (const result of jwtTokens) {
+              token[audiences[i]] = result;
               i++;
             }
 
-            const log = new AuthenticationLog();
-            log.userId = userInfo.id;
+            const logAuth = new AuthenticationLog();
+            logAuth.userId = userInfo.id;
 
-            log.token = decodeToken(results[0]);
-            log.ip = req.ip;
-            log.port = req.connection.remotePort;
-            log.url = req.originalUrl;
-            log.hostName = req.hostname;
+            logAuth.token = decodeToken(jwtTokens[0]);
+            logAuth.ip = req.ip;
+            logAuth.port = req.connection.remotePort;
+            logAuth.url = req.originalUrl;
+            logAuth.hostName = req.hostname;
 
-            log.jwTokenId = jti;
-            log.created = new Date();
+            logAuth.audience = audiences;
 
-            return log
+            logAuth.jwTokenId = jti;
+            logAuth.created = new Date();
+
+            return logAuth
               .create()
               .then(() => {
-                locals.send(200, {token});
-                return next();
+                return token
               });
-          })
-          .catch((err) => {
-            locals.send(500, {error: 'internal_error'});
-            return next(err);
           });
       }
 
@@ -391,15 +470,78 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     /**
      * Create a User
      */
-    @Route({method: 'post', path: '/'})
+    @Route({
+      method: 'post', path: '/',
+      before: (options.onBeforeUserCreate as any)
+    })
     create(req: Request, res: Response, next: NextFunction) {
-      res.locals.send(200, {
-        itWorked: 'create'
-      }, res);
+      const locals = res.locals as IRoutableLocals;
+      const customFields = (options.create || <any>{}).acceptFields
+        || (((sapi.config.authentication || <any>{}).native || <any>{}).create || <any>{}).acceptFields;
 
-      next();
+      const email = `${locals.reqBody.email}`;
+      const password = `${locals.reqBody.password}`;
+      const domain = `${locals.reqBody.domain || options.defaultDomain || nativeAuthConfig.defaultDomain}`;
+
+      if (!email || email === 'undefined') {
+        locals.send(400, {error: 'email address is invalid, check body'});
+        return next();
+      }
+
+      if (!password || password === 'undefined') {
+        locals.send(400, {error: 'password is invalid, check body'});
+        return next();
+      }
+
+      let user;
+      User
+        .getOne({
+          [fields.emailDb]: email,
+          [fields.domainDb]: domain
+        })
+        .then((existingUser) => {
+          // Make sure the user doesn't already exist
+          if (existingUser) {
+            locals.send(409, {error: 'email_in_use'});
+            throw 409;
+          }
+        })
+        .then(() => hash(password, bcryptHashRounds))
+        .then((pwHash) => {
+          user = new User();
+
+          user.email = email;
+          user.password = pwHash;
+          user.domain = domain;
+          user.emailVerified = false;
+          user.emailVerifiedKey = randomBytes(33).toString('base64');
+
+          if (customFields) {
+            for (let jsonField of Object.keys(customFields)) {
+              if (locals.reqBody[jsonField] === undefined) {
+                continue;
+              }
+              user[customFields[jsonField]] = locals.reqBody[jsonField];
+            }
+          }
+        })
+        .then(() => user.create())
+        .then(() => {
+          delete user.password;
+          return options.onUserCreated(user.toJson());
+        })
+        .then(() => next())
+        .catch((err) => {
+          if (err === 409) {
+            return next();
+          }
+          next(err);
+        });
     }
 
+    /**
+     * Verify email nounce - authenticates that user has access to provided email address
+     */
     @Route({method: 'put', path: '/:id/confirm-email'})
     emailConfirmation(req: Request, res: Response, next: NextFunction) {
       res.locals.send(200, {

@@ -43,7 +43,7 @@
     "nsp": "^2.6.3"
   },
   "dependencies": {
-    "@sakuraapi/api": "0.6.4",
+    "@sakuraapi/api": "0.6.5",
     "bcrypt": "^1.0.2",
     "install": "^0.10.1",
     "jsonwebtoken": "^7.4.1",
