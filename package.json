@@ -38,6 +38,7 @@
     "@types/express": "^4.0.35",
     "@types/jsonwebtoken": "^7.2.0",
     "@types/mongodb": "^2.2.2",
+    "@types/urlsafe-base64": "^1.0.28",
     "@types/uuid": "^2.0.29",
     "jasmine": "^2.6.0",
     "nsp": "^2.6.3"
@@ -49,6 +50,7 @@
     "jsonwebtoken": "^7.4.1",
     "mongodb": "^2.2.27",
     "npm": "^4.6.1",
+    "urlsafe-base64": "^1.0.0",
     "uuid": "^3.0.1"
   }
 }

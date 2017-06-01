@@ -24,11 +24,18 @@ import {
   sign as signToken
 } from 'jsonwebtoken';
 import {
+  createCipheriv,
+  createDecipheriv,
   createHmac,
   randomBytes
 } from 'crypto';
 import {v4 as uuid} from 'uuid';
 import {ObjectID} from 'mongodb';
+import {
+  decode as urlBase64Decode,
+  encode as urlBase64Encode,
+  validate as urlBase64Validate
+} from 'urlsafe-base64';
 
 /**
  * Various options that can be set for initializing the AuthNativeAuthorityApi Module
@@ -122,7 +129,14 @@ export interface IAuthenticationAuthorityOptions {
    * claiming.
    * @param newUser an object of the user just created, minus the hashed password field.
    */
-  onUserCreated: (newUser: any) => Promise<any>;
+  onUserCreated: (newUser: any, emailVerificationKey: string, req?: Request, res?: Response) => Promise<any>;
+
+  /**
+   * Called when the user needs the email verification key resent.. note that
+   * @param user note: if the requested user doesn't exist, this will be undefined
+   * @param emailVerificationKey note: if the requested user doesn't exist, this will be undefined
+   */
+  onResendEmailConfirmation: (user: any, emailVerificationKey: string, req?: Request, res?: Response) => Promise<any>;
 }
 
 /**
@@ -195,14 +209,6 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     || ((nativeAuthConfig.model || <any>{}).emailVerified || <any>{}).jsonField
     || 'emailVerified',
 
-    emailVerificationKeyDb: ((options.model || <any>{}).emailVerificationKey || <any>{}).dbField
-    || ((nativeAuthConfig.model || <any>{}).emailVerificationKey || <any>{}).dbField
-    || 'emailVerificationKey',
-
-    emailVerificationKeyJson: ((options.model || <any>{}).emailVerificationKey || <any>{}).jsonField
-    || ((nativeAuthConfig.model || <any>{}).emailVerificationKey || <any>{}).jsonField
-    || 'emailVerificationKey',
-
   };
 
   @Model(sapi, {
@@ -224,9 +230,6 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
     @Db(fields.emailVerifiedDb) @Json(fields.emailValidatedJson)
     emailVerified = false;
-
-    @Db(fields.emailVerificationKeyDb) @Json(fields.emailVerificationKeyJson)
-    emailVerifiedKey: string;
   }
 
   @Model(sapi, {
@@ -494,6 +497,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       }
 
       let user;
+      let emailVerificationKey;
       User
         .getOne({
           [fields.emailDb]: email,
@@ -514,7 +518,6 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           user.password = pwHash;
           user.domain = domain;
           user.emailVerified = false;
-          user.emailVerifiedKey = randomBytes(33).toString('base64');
 
           if (customFields) {
             for (let jsonField of Object.keys(customFields)) {
@@ -526,29 +529,152 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           }
         })
         .then(() => user.create())
-        .then(() => {
-          delete user.password;
-          return options.onUserCreated(user.toJson());
-        })
+        .then(() => this.getEmailVerificationToken(user.id))
+        .then((emailVerificationKey) => options.onUserCreated(user.toJson(), emailVerificationKey, req, res))
         .then(() => next())
         .catch((err) => {
           if (err === 409) {
             return next();
           }
+          locals.send(500, {error: 'internal_server_error'});
           next(err);
         });
     }
 
     /**
-     * Verify email nounce - authenticates that user has access to provided email address
+     * Verify email - authenticates that user has access to provided email address
      */
-    @Route({method: 'put', path: '/:id/confirm-email'})
-    emailConfirmation(req: Request, res: Response, next: NextFunction) {
-      res.locals.send(200, {
-        itWorked: 'confirmEmail'
-      }, res);
+    @Route({method: 'put', path: '/confirm/:encToken'})
+    emailVerification(req: Request, res: Response, next: NextFunction) {
+      const locals = res.locals as IRoutableLocals;
+      const tokenParts = req.params.encToken.split('.');
 
-      next();
+      if (tokenParts && tokenParts.length !== 3) {
+        locals.send(400, {error: 'invalid_key'});
+        return next();
+      }
+
+      const tokenBase64 = tokenParts[0];
+      const hmacBase64 = tokenParts[1];
+      const ivBase64 = tokenParts[2];
+
+      if (!urlBase64Validate(tokenBase64) || !urlBase64Validate(hmacBase64) || !urlBase64Validate(ivBase64)) {
+        locals.send(400, {error: 'invalid_key'});
+        return next();
+      }
+
+      const encryptedToken = urlBase64Decode(tokenBase64);
+      const hmacBuffer = urlBase64Decode(hmacBase64);
+      const ivBuffer = urlBase64Decode(ivBase64);
+
+      let token;
+      try {
+        const decipher = createDecipheriv('aes-256-gcm', jwtAuthConfig.key, ivBuffer);
+        decipher.setAuthTag(hmacBuffer);
+        const tokenBuffer = Buffer.concat([
+          decipher.update(encryptedToken),
+          decipher.final()
+        ]);
+        token = JSON.parse(tokenBuffer.toString('utf8'));
+      } catch (err) {
+        locals.send(403, {error: 'invalid_token'});
+        return next(err);
+      }
+
+      User
+        .getById(token.userId)
+        .then((user: any) => {
+          if (!user) {
+            return locals.send(403, {error: 'invalid_token'});
+          }
+
+          if (!user.emailVerified) {
+            user.emailVerified = true;
+            return user.save();
+          }
+        })
+        .then(() => next())
+        .catch((err) => {
+          locals.send(500, {error: 'internal_server_error'});
+          return next(err);
+        });
+    }
+
+    /**
+     * send a new email verification key
+     */
+    @Route({
+      method: 'post', path: '/confirm'
+    })
+    newEmailVerificationKey(req: Request, res: Response, next: NextFunction) {
+      const locals = res.locals as IRoutableLocals;
+
+      const email = `${locals.reqBody.email}`;
+      const password = `${locals.reqBody.password}`;
+      const domain = `${locals.reqBody.domain || options.defaultDomain || nativeAuthConfig.defaultDomain}`;
+
+      const query = {
+        [fields.emailJson]: email,
+        [fields.domainJson]: domain,
+      };
+
+      let user;
+      User
+        .getOne(query)
+        .then((userFound) => {
+          if (userFound) {
+            user = userFound;
+            return this.getEmailVerificationToken(user.id)
+          }
+        })
+        .then((key) => options.onResendEmailConfirmation(user, key, req, res))
+        .then(() => next())
+        .catch((err) => {
+          locals.send(500, {error: 'internal_server_error'});
+          next(err);
+        });
+    }
+
+    /**
+     * Reset password
+     */
+    @Route({
+      method: 'put', path: '/change-password'
+    })
+    changePassword(req: Request, res: Response, next: NextFunction) {
+      throw new Error('not implemented');
+    }
+
+    /**
+     * Forgot password
+     */
+    @Route({
+      method: 'put', path: '/forgot-password'
+    })
+    forgotPassword(req: Request, res: Response, next: NextFunction) {
+      throw new Error('not implemented');
+    }
+
+    private getEmailVerificationToken(userId: string | ObjectID): Promise<string> {
+      return new Promise((resolve, reject) => {
+        try {
+          const iv = randomBytes(16);
+          const cipher = createCipheriv('aes-256-gcm', jwtAuthConfig.key, iv);
+          const keyContent = {
+            userId: userId
+          };
+
+          const emailKeyBuffer = Buffer.concat([
+            cipher.update(JSON.stringify(keyContent), 'utf8'),
+            cipher.final()
+          ]);
+          const emailKeyHMACBuffer = cipher.getAuthTag();
+
+          resolve(`${urlBase64Encode(emailKeyBuffer)}.${urlBase64Encode(emailKeyHMACBuffer)}.${urlBase64Encode(iv)}`);
+        } catch (err) {
+          reject(err);
+        }
+      });
     }
   }
 }
