@@ -17,7 +17,7 @@ import {
 } from 'express';
 import {
   compare,
-  hash
+  hash as bcryptHash
 } from 'bcrypt';
 import {
   decode as decodeToken,
@@ -26,6 +26,7 @@ import {
 import {
   createCipheriv,
   createDecipheriv,
+  createHash,
   createHmac,
   randomBytes
 } from 'crypto';
@@ -36,6 +37,8 @@ import {
   encode as urlBase64Encode,
   validate as urlBase64Validate
 } from 'urlsafe-base64';
+
+const IV_LENGTH = 16;
 
 /**
  * Various options that can be set for initializing the AuthNativeAuthorityApi Module
@@ -99,13 +102,19 @@ export interface IAuthenticationAuthorityOptions {
     password?: {
       dbField?: string;
     },
-    emailVerified: {
+    emailVerified?: {
       dbField?: string;
       jsonField?: string;
     },
-    emailVerificationKey: {
+    emailVerificationKey?: {
       dbField?: string;
       jsonField?: string;
+    },
+    passwordResetHashDb?: {
+      dbField?: string;
+    },
+    lastLoginDb?: {
+      dbField?: string;
     }
   }
   /**
@@ -137,6 +146,14 @@ export interface IAuthenticationAuthorityOptions {
    * @param emailVerificationKey note: if the requested user doesn't exist, this will be undefined
    */
   onResendEmailConfirmation: (user: any, emailVerificationKey: string, req?: Request, res?: Response) => Promise<any>;
+
+  /**
+   * Called when the user requests a "forgot password" email. It will generate a one time use password reset token. Only the
+   * last one used is valid and it must be used within the time-to-live.
+   * @param user
+   * @param token
+   */
+  onForgotPasswordEmailRequest: (user: any, token: string, req?: Request, res?: Response) => Promise<any>;
 }
 
 /**
@@ -201,13 +218,25 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     || ((nativeAuthConfig.model || <any>{}).password || <any>{}).dbField
     || 'pw',
 
+    passwordSetDateDb: ((options.model || <any>{}).password || <any>{}).dbField
+    || ((nativeAuthConfig.model || <any>{}).password || <any>{}).dbField
+    || 'pwSet',
+
     emailVerifiedDb: ((options.model || <any>{}).emailVerified || <any>{}).dbField
     || ((nativeAuthConfig.model || <any>{}).emailVerified || <any>{}).dbField
     || 'emailVerified',
 
-    emailValidatedJson: ((options.model || <any>{}).emailVerified || <any>{}).jsonField
+    emailVerifiedJson: ((options.model || <any>{}).emailVerified || <any>{}).jsonField
     || ((nativeAuthConfig.model || <any>{}).emailVerified || <any>{}).jsonField
     || 'emailVerified',
+
+    passwordResetHashDb: ((options.model || <any>{}).passwordResetHashDb || <any>{}).dbField
+    || ((nativeAuthConfig.model || <any>{}).passwordResetHashDb || <any>{}).dbField
+    || 'pwResetId',
+
+    lastLoginDb: ((options.model || <any>{}).passwordResetHashDb || <any>{}).dbField
+    || ((nativeAuthConfig.model || <any>{}).passwordResetHashDb || <any>{}).dbField
+    || 'lastLogin'
 
   };
 
@@ -228,7 +257,10 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     @Db({field: fields.passwordDb, private: true})
     password: string;
 
-    @Db(fields.emailVerifiedDb) @Json(fields.emailValidatedJson)
+    @Db({field: fields.passwordSetDateDb})
+    passwordSet = new Date();
+
+    @Db(fields.emailVerifiedDb) @Json(fields.emailVerifiedJson)
     emailVerified = false;
   }
 
@@ -365,6 +397,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         })
         .then(buildJwtToken)
         .then((token) => locals.send(200, {token}))
+        .then(() => userInfo.save({[fields.lastLoginDb]: new Date()}))
         .then(() => next())
         .catch((err) => {
           if (err === 401 || err === 403) {
@@ -510,7 +543,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
             throw 409;
           }
         })
-        .then(() => hash(password, bcryptHashRounds))
+        .then(() => bcryptHash(password, bcryptHashRounds))
         .then((pwHash) => {
           user = new User();
 
@@ -529,7 +562,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           }
         })
         .then(() => user.create())
-        .then(() => this.getEmailVerificationToken(user.id))
+        .then(() => this.encryptToken({userId: user.id}))
         .then((emailVerificationKey) => options.onUserCreated(user.toJson(), emailVerificationKey, req, res))
         .then(() => next())
         .catch((err) => {
@@ -544,57 +577,36 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     /**
      * Verify email - authenticates that user has access to provided email address
      */
-    @Route({method: 'put', path: '/confirm/:encToken'})
+    @Route({method: 'get', path: '/confirm/:token'})
     emailVerification(req: Request, res: Response, next: NextFunction) {
       const locals = res.locals as IRoutableLocals;
-      const tokenParts = req.params.encToken.split('.');
 
-      if (tokenParts && tokenParts.length !== 3) {
-        locals.send(400, {error: 'invalid_key'});
-        return next();
-      }
-
-      const tokenBase64 = tokenParts[0];
-      const hmacBase64 = tokenParts[1];
-      const ivBase64 = tokenParts[2];
-
-      if (!urlBase64Validate(tokenBase64) || !urlBase64Validate(hmacBase64) || !urlBase64Validate(ivBase64)) {
-        locals.send(400, {error: 'invalid_key'});
-        return next();
-      }
-
-      const encryptedToken = urlBase64Decode(tokenBase64);
-      const hmacBuffer = urlBase64Decode(hmacBase64);
-      const ivBuffer = urlBase64Decode(ivBase64);
-
-      let token;
-      try {
-        const decipher = createDecipheriv('aes-256-gcm', jwtAuthConfig.key, ivBuffer);
-        decipher.setAuthTag(hmacBuffer);
-        const tokenBuffer = Buffer.concat([
-          decipher.update(encryptedToken),
-          decipher.final()
-        ]);
-        token = JSON.parse(tokenBuffer.toString('utf8'));
-      } catch (err) {
-        locals.send(403, {error: 'invalid_token'});
-        return next(err);
-      }
-
-      User
-        .getById(token.userId)
+      Promise
+        .resolve()
+        .then(() => {
+          const tokenParts = req.params.token.split('.');
+          if (tokenParts && tokenParts.length !== 3) {
+            throw 403;
+          }
+          return tokenParts;
+        })
+        .then(this.decryptToken)
+        .then((token) => User.getById(token.userId, {[fields.emailVerifiedDb]: 1}))
         .then((user: any) => {
           if (!user) {
-            return locals.send(403, {error: 'invalid_token'});
+            throw 403;
           }
 
           if (!user.emailVerified) {
-            user.emailVerified = true;
-            return user.save();
+            return user.save({[fields.emailVerifiedDb]: true});
           }
         })
         .then(() => next())
         .catch((err) => {
+          if (err === 403) {
+            locals.send(403, {error: 'invalid_token'});
+            return next();
+          }
           locals.send(500, {error: 'internal_server_error'});
           return next(err);
         });
@@ -624,7 +636,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         .then((userFound) => {
           if (userFound) {
             user = userFound;
-            return this.getEmailVerificationToken(user.id)
+            return this.encryptToken({userId: user.id});
           }
         })
         .then((key) => options.onResendEmailConfirmation(user, key, req, res))
@@ -636,7 +648,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     }
 
     /**
-     * Reset password
+     * Change password
      */
     @Route({
       method: 'put', path: '/change-password'
@@ -652,17 +664,138 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       method: 'put', path: '/forgot-password'
     })
     forgotPassword(req: Request, res: Response, next: NextFunction) {
-      throw new Error('not implemented');
+      const locals = res.locals as IRoutableLocals;
+
+      const email = `${locals.reqBody.email}`;
+      const domain = `${locals.reqBody.domain || options.defaultDomain || nativeAuthConfig.defaultDomain}`;
+
+      const query = {
+        [fields.emailJson]: email,
+        [fields.domainJson]: domain,
+      };
+
+      let user;
+      let token;
+      let tokenHash;
+      Promise
+        .resolve()
+        .then(() => {
+          if (!locals.reqBody.email) {
+            // let the integrator decide what to do in this circumstance
+            return options
+              .onForgotPasswordEmailRequest(undefined, undefined, req, res)
+              .then(() => {
+                throw 'invalid';
+              });
+          }
+        })
+        .then(() => User.getOne(query))
+        .then((usr) => user = usr)
+        .then(() => (user)
+          ? this.encryptToken({
+            userId: user.id,
+            issued: new Date().getTime()
+          })
+          : null)
+        .then((tkn) => {
+          if (!tkn) {
+            return;
+          }
+          token = tkn;
+          tokenHash = this.hashToken(token);
+
+          return user.save({[fields.passwordResetHashDb]: tokenHash});
+        })
+        .then(() => options.onForgotPasswordEmailRequest(user, token, req, res))
+        .then(() => next())
+        .catch((err) => {
+          if (err === 'invalid') {
+            return next();
+          }
+          locals.send(500, {error: 'internal_server_error'});
+          next(err);
+        });
     }
 
-    private getEmailVerificationToken(userId: string | ObjectID): Promise<string> {
+    /**
+     * resets a forgotten password and sets email verified to true... a user should only be able to peform this task
+     * if he/she received a token at their email that let to a portal that send that token back into this
+     * endpoint... so, if the user's email verified was false, there's no reason to further pester them to verify their
+     * email.
+     */
+    @Route({
+      method: 'put', path: '/reset-password/:token'
+    })
+    resetPassword(req: Request, res: Response, next: NextFunction) {
+      const locals = res.locals as IRoutableLocals;
+
+      const password = `${locals.reqBody.password}`;
+
+      let user;
+      let token;
+      Promise
+        .resolve()
+        .then(() => {
+          if (!locals.reqBody.password || typeof locals.reqBody.password !== 'string') {
+            throw 400;
+          }
+
+          const tokenParts = req.params.token.split('.');
+          if (tokenParts && tokenParts.length !== 3) {
+            throw 403;
+          }
+          return tokenParts;
+        })
+        .then(this.decryptToken)
+        .then((tkn) => {
+          const elapsedTime = new Date().getTime() - tkn.issued;
+          if (elapsedTime > 24 * 3600000) { // 24 * 1 hour
+            throw 403;
+          }
+          token = tkn;
+        })
+        .then(() => User.getById(token.userId, {[fields.passwordDb]: 1, [fields.passwordResetHashDb]: 1}))
+        .then((usr) => {
+          if (!usr) {
+            throw 403;
+          }
+
+          if (usr[fields.passwordResetHashDb] !== this.hashToken(req.params.token)) {
+            throw 403;
+          }
+          user = usr;
+        })
+        .then(() => bcryptHash(password, bcryptHashRounds))
+        .then((pwHash) => user.save({
+          [fields.emailVerifiedDb]: true, // in theory, the only way they got the token to do this was with their email
+          [fields.passwordDb]: pwHash,
+          [fields.passwordResetHashDb]: null,
+          [fields.passwordSetDateDb]: new Date()
+        }))
+        .then(() => next())
+        .catch((err) => {
+          if (err === 400) {
+            locals.send(400, {error: 'bad_request'});
+            return next();
+          }
+          if (err === 403) {
+            locals.send(403, {error: 'invalid_token'});
+            return next();
+          }
+          locals.send(500, {error: 'internal_server_error'});
+          return next(err);
+        });
+
+    }
+
+    private encryptToken(keyContent: { [key: string]: any }): Promise<string> {
       return new Promise((resolve, reject) => {
         try {
-          const iv = randomBytes(16);
+          const iv = randomBytes(IV_LENGTH);
           const cipher = createCipheriv('aes-256-gcm', jwtAuthConfig.key, iv);
-          const keyContent = {
-            userId: userId
-          };
+          //const keyContent = {
+          //  userId: userId
+          //};
 
           const emailKeyBuffer = Buffer.concat([
             cipher.update(JSON.stringify(keyContent), 'utf8'),
@@ -675,6 +808,40 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           reject(err);
         }
       });
+    }
+
+    private decryptToken(tokenParts: any[]): Promise<any> {
+      return new Promise((resolve, reject) => {
+        const tokenBase64 = tokenParts[0];
+        const hmacBase64 = tokenParts[1];
+        const ivBase64 = tokenParts[2];
+
+        if (!urlBase64Validate(tokenBase64) || !urlBase64Validate(hmacBase64) || !urlBase64Validate(ivBase64)) {
+          return reject(403);
+        }
+
+        const encryptedToken = urlBase64Decode(tokenBase64);
+        const hmacBuffer = urlBase64Decode(hmacBase64);
+        const ivBuffer = urlBase64Decode(ivBase64);
+
+        let token;
+        try {
+          const decipher = createDecipheriv('aes-256-gcm', jwtAuthConfig.key, ivBuffer);
+          decipher.setAuthTag(hmacBuffer);
+          const tokenBuffer = Buffer.concat([
+            decipher.update(encryptedToken),
+            decipher.final()
+          ]);
+          token = JSON.parse(tokenBuffer.toString('utf8'));
+          resolve(token);
+        } catch (err) {
+          return reject(403);
+        }
+      });
+    }
+
+    private hashToken(token): string {
+      return createHash('sha256').update(JSON.stringify(token)).digest('base64');
     }
   }
 }
