@@ -38,6 +38,8 @@ import {
   validate as urlBase64Validate
 } from 'urlsafe-base64';
 
+import pwStrength = require('zxcvbn');
+
 const IV_LENGTH = 16;
 
 /**
@@ -110,10 +112,13 @@ export interface IAuthenticationAuthorityOptions {
       dbField?: string;
       jsonField?: string;
     },
-    passwordResetHashDb?: {
+    passwordResetHash?: {
       dbField?: string;
     },
     lastLoginDb?: {
+      dbField?: string;
+    },
+    passwordStrength?: {
       dbField?: string;
     }
   }
@@ -230,12 +235,16 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     || ((nativeAuthConfig.model || <any>{}).emailVerified || <any>{}).jsonField
     || 'emailVerified',
 
-    passwordResetHashDb: ((options.model || <any>{}).passwordResetHashDb || <any>{}).dbField
-    || ((nativeAuthConfig.model || <any>{}).passwordResetHashDb || <any>{}).dbField
+    passwordResetHashDb: ((options.model || <any>{}).passwordResetHash || <any>{}).dbField
+    || ((nativeAuthConfig.model || <any>{}).passwordResetHash || <any>{}).dbField
     || 'pwResetId',
 
-    lastLoginDb: ((options.model || <any>{}).passwordResetHashDb || <any>{}).dbField
-    || ((nativeAuthConfig.model || <any>{}).passwordResetHashDb || <any>{}).dbField
+    passwordStrengthDb: ((options.model || <any>{}).passwordStrength || <any>{}).dbField
+    || ((nativeAuthConfig.model || <any>{}).passwordStrength || <any>{}).dbField
+    || 'pwStrength',
+
+    lastLoginDb: ((options.model || <any>{}).passwordResetHash || <any>{}).dbField
+    || ((nativeAuthConfig.model || <any>{}).passwordResetHash || <any>{}).dbField
     || 'lastLogin'
 
   };
@@ -259,6 +268,9 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
     @Db({field: fields.passwordSetDateDb})
     passwordSet = new Date();
+
+    @Db({field: fields.passwordStrengthDb})
+    passwordStrength: number;
 
     @Db(fields.emailVerifiedDb) @Json(fields.emailVerifiedJson)
     emailVerified = false;
@@ -551,6 +563,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           user.password = pwHash;
           user.domain = domain;
           user.emailVerified = false;
+          user.passwordSet = new Date();
 
           if (customFields) {
             for (let jsonField of Object.keys(customFields)) {
@@ -560,6 +573,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
               user[customFields[jsonField]] = locals.reqBody[jsonField];
             }
           }
+
+          user.passwordStrength = this.getPasswordStrength(password, user);
         })
         .then(() => user.create())
         .then(() => this.encryptToken({userId: user.id}))
@@ -654,7 +669,58 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       method: 'put', path: '/change-password'
     })
     changePassword(req: Request, res: Response, next: NextFunction) {
-      throw new Error('not implemented');
+      const locals = res.locals as IRoutableLocals;
+
+      const email = `${locals.reqBody.email}`;
+      const currentPassword = `${locals.reqBody.currentPassword}`;
+      const newPassword = `${locals.reqBody.newPassword}`;
+      const domain = `${locals.reqBody.domain || options.defaultDomain || nativeAuthConfig.defaultDomain}`;
+
+      let user;
+      Promise
+        .resolve()
+        .then(() => {
+          if (!locals.reqBody.email || !locals.reqBody.currentPassword || !locals.reqBody.newPassword) {
+            locals.send(400, {error: 'invalid_body'});
+            throw 400;
+          }
+
+          const query = {
+            [fields.emailDb]: email,
+            [fields.domainDb]: domain
+          };
+
+          return User.getOne(query);
+        })
+        .then((usr) => {
+          user = usr;
+          if (!user) {
+            locals.send(401, {error: 'unauthorized'});
+            throw 401;
+          }
+        })
+        .then(() => compare(currentPassword, user.password))
+        .then((pwMatch) => {
+          if (!pwMatch) {
+            locals.send(401, {error: 'unauthorized'});
+            throw 401;
+          }
+        })
+        .then(() => bcryptHash(newPassword, bcryptHashRounds))
+        .then((pwHash) => {
+          return user.save({
+            [fields.passwordDb]: pwHash,
+            [fields.passwordSetDateDb]: new Date(),
+            [fields.passwordStrengthDb]: this.getPasswordStrength(newPassword, user)
+          });
+        })
+        .then(() => next())
+        .catch((err) => {
+          if (err === 400 || err == 401) {
+            return next();
+          }
+          next(err);
+        });
     }
 
     /**
@@ -770,7 +836,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           [fields.emailVerifiedDb]: true, // in theory, the only way they got the token to do this was with their email
           [fields.passwordDb]: pwHash,
           [fields.passwordResetHashDb]: null,
-          [fields.passwordSetDateDb]: new Date()
+          [fields.passwordSetDateDb]: new Date(),
+          [fields.passwordStrengthDb]: pwStrength(password).score
         }))
         .then(() => next())
         .catch((err) => {
@@ -842,6 +909,28 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
     private hashToken(token): string {
       return createHash('sha256').update(JSON.stringify(token)).digest('base64');
+    }
+
+    private getPasswordStrength(password: string, user: any): number {
+
+      const cd = []; // custom dictionary
+
+      for (const key of Object.keys(user)) {
+        let value = user[key];
+        if (typeof value === 'string' && key !== 'password') {
+          cd.push(user[key]);
+        }
+      }
+
+      /** See: https://github.com/dropbox/zxcvbn
+       * 0 # too guessable: risky password. (guesses < 10^3)
+       * 1 # very guessable: protection from throttled online attacks. (guesses < 10^6)
+       * 2 # somewhat guessable: protection from unthrottled online attacks. (guesses < 10^8)
+       * 3 # safely unguessable: moderate protection from offline slow-hash scenario. (guesses < 10^10)
+       * 4 # very unguessable: strong protection from offline slow-hash scenario. (guesses >= 10^10)
+       */
+      const pwValue = ((password || {} as any).length > 99) ? password.substring(0, 99) : password;
+      return pwStrength(pwValue, cd).score;
     }
   }
 }

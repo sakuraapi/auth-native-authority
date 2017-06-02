@@ -41,16 +41,17 @@
     "@types/urlsafe-base64": "^1.0.28",
     "@types/uuid": "^2.0.29",
     "jasmine": "^2.6.0",
-    "nsp": "^2.6.3"
+    "nsp": "^2.6.3",
+    "typescript": "^2.3.4"
   },
   "dependencies": {
     "@sakuraapi/api": "0.6.5",
     "bcrypt": "^1.0.2",
-    "install": "^0.10.1",
     "jsonwebtoken": "^7.4.1",
     "mongodb": "^2.2.27",
     "npm": "^4.6.1",
     "urlsafe-base64": "^1.0.0",
-    "uuid": "^3.0.1"
+    "uuid": "^3.0.1",
+    "zxcvbn": "^4.4.2"
   }
 }
