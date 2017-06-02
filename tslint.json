@@ -12,7 +12,6 @@
       true,
       128
     ],
-    "no-floating-promises": true,
     "quotemark": [
       true,
       "single",

@@ -12,7 +12,6 @@
     ],
     "no-empty-interface": false,
     "no-empty": false,
-    "no-floating-promises": true,
     "no-shadowed-variable": false,
     "no-string-literal": false,
     "only-arrow-functions": false,
@@ -27,7 +26,7 @@
         "multiline": "never",
         "singleline": "never"
       }
-    ],
+    ]
   },
   "jsRules": {
     "curly": true
