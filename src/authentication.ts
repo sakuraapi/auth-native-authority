@@ -10,19 +10,9 @@ import {
   SakuraApiRoutable
 } from '@sakuraapi/api';
 import {
-  Handler,
-  NextFunction,
-  Request,
-  Response
-} from 'express';
-import {
   compare,
   hash as bcryptHash
 } from 'bcrypt';
-import {
-  decode as decodeToken,
-  sign as signToken
-} from 'jsonwebtoken';
 import {
   createCipheriv,
   createDecipheriv,
@@ -30,13 +20,23 @@ import {
   createHmac,
   randomBytes
 } from 'crypto';
-import {v4 as uuid} from 'uuid';
+import {
+  Handler,
+  NextFunction,
+  Request,
+  Response
+} from 'express';
+import {
+  decode as decodeToken,
+  sign as signToken
+} from 'jsonwebtoken';
 import {ObjectID} from 'mongodb';
 import {
   decode as urlBase64Decode,
   encode as urlBase64Encode,
   validate as urlBase64Validate
 } from 'urlsafe-base64';
+import {v4 as uuid} from 'uuid';
 
 import pwStrength = require('zxcvbn');
 
@@ -53,7 +53,7 @@ export interface IAuthenticationAuthorityOptions {
   userDbConfig: {
     collection: string
     db: string;
-  }
+  };
 
   /**
    * The database where authTokens are stored so that you have a record of tokes that are issued.
@@ -61,7 +61,7 @@ export interface IAuthenticationAuthorityOptions {
   authDbConfig: {
     collection: string
     db: string;
-  }
+  };
 
   /**
    * If set, the system will require email & domain to login the user (a user can belong to multiple domains). If the domain
@@ -121,7 +121,7 @@ export interface IAuthenticationAuthorityOptions {
     passwordStrength?: {
       dbField?: string;
     }
-  }
+  };
   /**
    * Receives the current payload and the current db results from the user lookup. If you implement this, you should
    * modify the payload with whatever fields you need then resolve the promise with the new payload as the value. This
@@ -196,56 +196,56 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
   // note, though sapi.config.native is overridden by the options parameter, and the dbConfig must always come from the
   // options parameter.
-  const nativeAuthConfig = ((sapi.config.authentication || <any>{}).native || {}) as IAuthenticationAuthorityOptions;
+  const nativeAuthConfig = ((sapi.config.authentication || {} as any).native || {}) as IAuthenticationAuthorityOptions;
 
-  const jwtAuthConfig = (sapi.config.authentication || <any>{}).jwt || {};
+  const jwtAuthConfig = (sapi.config.authentication || {} as any).jwt || {};
   const bcryptHashRounds = options.bcryptHashRounds || nativeAuthConfig.bcryptHashRounds || 12;
 
   // Model Field Name Configuration
   const fields = {
-    emailDb: ((options.model || <any>{}).email || <any>{}).dbField
-    || ((nativeAuthConfig.model || <any>{}).email || <any>{}).dbField
-    || 'email',
-
-    emailJson: ((options.model || <any>{}).email || <any>{}).jsonField
-    || ((nativeAuthConfig.model || <any>{}).email || <any>{}).jsonField
-    || 'email',
-
-    domainDb: ((options.model || <any>{}).domain || <any>{}).dbField
-    || ((nativeAuthConfig.model || <any>{}).domain || <any>{}).dbField
+    domainDb: ((options.model || {} as any).domain || {} as any).dbField
+    || ((nativeAuthConfig.model || {} as any).domain || {} as any).dbField
     || 'domain',
 
-    domainJson: ((options.model || <any>{}).domain || <any>{}).jsonField
-    || ((nativeAuthConfig.model || <any>{}).domain || <any>{}).jsonField
+    domainJson: ((options.model || {} as any).domain || {} as any).jsonField
+    || ((nativeAuthConfig.model || {} as any).domain || {} as any).jsonField
     || 'domain',
 
-    passwordDb: ((options.model || <any>{}).password || <any>{}).dbField
-    || ((nativeAuthConfig.model || <any>{}).password || <any>{}).dbField
+    emailDb: ((options.model || {} as any).email || {} as any).dbField
+    || ((nativeAuthConfig.model || {} as any).email || {} as any).dbField
+    || 'email',
+
+    emailJson: ((options.model || {} as any).email || {} as any).jsonField
+    || ((nativeAuthConfig.model || {} as any).email || {} as any).jsonField
+    || 'email',
+
+    emailVerifiedDb: ((options.model || {} as any).emailVerified || {} as any).dbField
+    || ((nativeAuthConfig.model || {} as any).emailVerified || {} as any).dbField
+    || 'emailVerified',
+
+    emailVerifiedJson: ((options.model || {} as any).emailVerified || {} as any).jsonField
+    || ((nativeAuthConfig.model || {} as any).emailVerified || {} as any).jsonField
+    || 'emailVerified',
+
+    lastLoginDb: ((options.model || {} as any).passwordResetHash || {} as any).dbField
+    || ((nativeAuthConfig.model || {} as any).passwordResetHash || {} as any).dbField
+    || 'lastLogin',
+
+    passwordDb: ((options.model || {} as any).password || {} as any).dbField
+    || ((nativeAuthConfig.model || {} as any).password || {} as any).dbField
     || 'pw',
 
-    passwordSetDateDb: ((options.model || <any>{}).password || <any>{}).dbField
-    || ((nativeAuthConfig.model || <any>{}).password || <any>{}).dbField
-    || 'pwSet',
-
-    emailVerifiedDb: ((options.model || <any>{}).emailVerified || <any>{}).dbField
-    || ((nativeAuthConfig.model || <any>{}).emailVerified || <any>{}).dbField
-    || 'emailVerified',
-
-    emailVerifiedJson: ((options.model || <any>{}).emailVerified || <any>{}).jsonField
-    || ((nativeAuthConfig.model || <any>{}).emailVerified || <any>{}).jsonField
-    || 'emailVerified',
-
-    passwordResetHashDb: ((options.model || <any>{}).passwordResetHash || <any>{}).dbField
-    || ((nativeAuthConfig.model || <any>{}).passwordResetHash || <any>{}).dbField
+    passwordResetHashDb: ((options.model || {} as any).passwordResetHash || {} as any).dbField
+    || ((nativeAuthConfig.model || {} as any).passwordResetHash || {} as any).dbField
     || 'pwResetId',
 
-    passwordStrengthDb: ((options.model || <any>{}).passwordStrength || <any>{}).dbField
-    || ((nativeAuthConfig.model || <any>{}).passwordStrength || <any>{}).dbField
-    || 'pwStrength',
+    passwordSetDateDb: ((options.model || {} as any).password || {} as any).dbField
+    || ((nativeAuthConfig.model || {} as any).password || {} as any).dbField
+    || 'pwSet',
 
-    lastLoginDb: ((options.model || <any>{}).passwordResetHash || <any>{}).dbField
-    || ((nativeAuthConfig.model || <any>{}).passwordResetHash || <any>{}).dbField
-    || 'lastLogin'
+    passwordStrengthDb: ((options.model || {} as any).passwordStrength || {} as any).dbField
+    || ((nativeAuthConfig.model || {} as any).passwordStrength || {} as any).dbField
+    || 'pwStrength'
 
   };
 
@@ -278,8 +278,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
   @Model(sapi, {
     dbConfig: {
-      db: options.authDbConfig.db,
       collection: options.authDbConfig.collection,
+      db: options.authDbConfig.db,
       promiscuous: true
     }
   })
@@ -378,11 +378,11 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
           const payload = {
             [fields.emailJson]: email,
-            [fields.domainJson]: domain,
+            [fields.domainJson]: domain
           };
 
           // Allows the inclusion of other fields from the User collection
-          const fieldInclusion = ((sapi.config.authentication || <any>{}).jwt || <any>{}).fields;
+          const fieldInclusion = ((sapi.config.authentication || {} as any).jwt || {} as any).fields;
           if (fieldInclusion) {
             for (const dbbField of Object.keys(fieldInclusion)) {
               const payloadField = fieldInclusion[dbbField];
@@ -401,7 +401,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
             return options
               .onJWTPayloadInject(payload, dbDoc)
               .then((updatedPayload) => {
-                return updatedPayload
+                return updatedPayload;
               });
           } else {
             return payload;
@@ -492,7 +492,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
             return logAuth
               .create()
               .then(() => {
-                return token
+                return token;
               });
           });
       }
@@ -501,9 +501,9 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
                              exp: string, payload: any, jti: string): Promise<string> {
         return new Promise((resolve, reject) => {
           signToken(payload, key, {
-            audience: audience,
+            audience,
             expiresIn: exp,
-            issuer: issuer,
+            issuer,
             jwtid: jti
           }, (err, token) => {
             if (err) {
@@ -519,13 +519,13 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
      * Create a User
      */
     @Route({
-      method: 'post', path: '/',
-      before: (options.onBeforeUserCreate as any)
+      before: (options.onBeforeUserCreate as any),
+      method: 'post', path: '/'
     })
     create(req: Request, res: Response, next: NextFunction) {
       const locals = res.locals as IRoutableLocals;
-      const customFields = (options.create || <any>{}).acceptFields
-        || (((sapi.config.authentication || <any>{}).native || <any>{}).create || <any>{}).acceptFields;
+      const customFields = (options.create || {} as any).acceptFields
+        || (((sapi.config.authentication || {} as any).native || {} as any).create || {} as any).acceptFields;
 
       const email = `${locals.reqBody.email}`;
       const password = `${locals.reqBody.password}`;
@@ -542,7 +542,6 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       }
 
       let user;
-      let emailVerificationKey;
       User
         .getOne({
           [fields.emailDb]: email,
@@ -566,7 +565,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           user.passwordSet = new Date();
 
           if (customFields) {
-            for (let jsonField of Object.keys(customFields)) {
+            for (const jsonField of Object.keys(customFields)) {
               if (locals.reqBody[jsonField] === undefined) {
                 continue;
               }
@@ -642,7 +641,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
       const query = {
         [fields.emailJson]: email,
-        [fields.domainJson]: domain,
+        [fields.domainJson]: domain
       };
 
       let user;
@@ -716,7 +715,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         })
         .then(() => next())
         .catch((err) => {
-          if (err === 400 || err == 401) {
+          if (err === 400 || err === 401) {
             return next();
           }
           next(err);
@@ -737,7 +736,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
       const query = {
         [fields.emailJson]: email,
-        [fields.domainJson]: domain,
+        [fields.domainJson]: domain
       };
 
       let user;
@@ -751,7 +750,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
             return options
               .onForgotPasswordEmailRequest(undefined, undefined, req, res)
               .then(() => {
-                throw 'invalid';
+                throw new Error('invalid');
               });
           }
         })
@@ -759,8 +758,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         .then((usr) => user = usr)
         .then(() => (user)
           ? this.encryptToken({
-            userId: user.id,
-            issued: new Date().getTime()
+            issued: new Date().getTime(),
+            userId: user.id
           })
           : null)
         .then((tkn) => {
@@ -860,9 +859,6 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         try {
           const iv = randomBytes(IV_LENGTH);
           const cipher = createCipheriv('aes-256-gcm', jwtAuthConfig.key, iv);
-          //const keyContent = {
-          //  userId: userId
-          //};
 
           const emailKeyBuffer = Buffer.concat([
             cipher.update(JSON.stringify(keyContent), 'utf8'),
@@ -916,7 +912,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       const cd = []; // custom dictionary
 
       for (const key of Object.keys(user)) {
-        let value = user[key];
+        const value = user[key];
         if (typeof value === 'string' && key !== 'password') {
           cd.push(user[key]);
         }

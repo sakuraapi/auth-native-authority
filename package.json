@@ -13,10 +13,14 @@
   ],
   "scripts": {
     "build": "rm -rf lib/ ; tsc",
+    "lint": "npm run build && npm run lint:tests && npm run lint:code",
+    "lint:code": "echo 'CODE LINT' ; npm run tslint -- -e \"node_modules/**/**/*.ts\"  -e \"**/**/*.d.ts\" -e \"**/**/*.spec.ts\" -e \"spec/**/**\" -t stylish --fix src/**/*.ts",
+    "lint:tests": "echo 'TEST LINT' ; npm run tslint -- -e \"node_modules/**/**/*.ts\"  -e \"**/**/*.d.ts\" -t stylish --fix -c tslint.spec.json src/**/*.spec.ts",
     "nsp": "nsp",
     "prepublish": "npm build && npm test && npm run nsp check",
     "test": "echo \"Error: no test specified\"",
-    "tsc": "tsc"
+    "tsc": "tsc",
+    "tslint": "tslint"
   },
   "repository": {
     "type": "git",
@@ -42,6 +46,7 @@
     "@types/uuid": "^2.0.29",
     "jasmine": "^2.6.0",
     "nsp": "^2.6.3",
+    "tslint": "^5.4.2",
     "typescript": "^2.3.4"
   },
   "dependencies": {
