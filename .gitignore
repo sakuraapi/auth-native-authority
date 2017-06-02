@@ -13,6 +13,7 @@ coverage
 *.swo
 node_modules
 dist
+lib
 *xunit.xml
 *.js
 *.d.ts
