@@ -7,35 +7,15 @@ import {
   Route,
   SakuraApi,
   SakuraApiModel,
+  SakuraApiModuleResult,
   SakuraApiRoutable
 } from '@sakuraapi/api';
-import {
-  compare,
-  hash as bcryptHash
-} from 'bcrypt';
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  createHmac,
-  randomBytes
-} from 'crypto';
-import {
-  Handler,
-  NextFunction,
-  Request,
-  Response
-} from 'express';
-import {
-  decode as decodeToken,
-  sign as signToken
-} from 'jsonwebtoken';
+import {compare, hash as bcryptHash} from 'bcrypt';
+import {createCipheriv, createDecipheriv, createHash, createHmac, randomBytes} from 'crypto';
+import {Handler, NextFunction, Request, Response} from 'express';
+import {decode as decodeToken, sign as signToken} from 'jsonwebtoken';
 import {ObjectID} from 'mongodb';
-import {
-  decode as urlBase64Decode,
-  encode as urlBase64Encode,
-  validate as urlBase64Validate
-} from 'urlsafe-base64';
+import {decode as urlBase64Decode, encode as urlBase64Encode, validate as urlBase64Validate} from 'urlsafe-base64';
 import {v4 as uuid} from 'uuid';
 
 import pwStrength = require('zxcvbn');
@@ -187,7 +167,7 @@ export interface IAuthenticationAuthorityOptions {
  * @param sapi your server's SakuraApi instance.
  * @param options
  */
-export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthenticationAuthorityOptions) {
+export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthenticationAuthorityOptions): SakuraApiModuleResult {
 
   if (!options.userDbConfig || !options.userDbConfig.db || !options.userDbConfig.collection) {
     throw new Error('auth-native-authority addAuthenticationAuthority options parameter must have a valid db configuration ' +
@@ -249,14 +229,14 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
   };
 
-  @Model(sapi, {
+  @Model({
     dbConfig: {
       collection: options.userDbConfig.collection,
       db: options.userDbConfig.db,
       promiscuous: true
     }
   })
-  class User extends SakuraApiModel {
+  class NativeAuthenticationAuthorityUser extends SakuraApiModel {
     @Db(fields.emailDb) @Json(fields.emailJson)
     email: string;
 
@@ -276,7 +256,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     emailVerified = false;
   }
 
-  @Model(sapi, {
+  @Model({
     dbConfig: {
       collection: options.authDbConfig.collection,
       db: options.authDbConfig.db,
@@ -318,7 +298,11 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     audience: any[] = [];
   }
 
-  @Routable(sapi, {baseUrl: 'auth/native', model: User, suppressApi: true})
+  @Routable({
+    baseUrl: 'auth/native',
+    model: NativeAuthenticationAuthorityUser,
+    suppressApi: true
+  })
   class AuthenticationAuthorityApi extends SakuraApiRoutable {
 
     /**
@@ -351,13 +335,13 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       let dbDoc;
       let userInfo;
 
-      User
+      NativeAuthenticationAuthorityUser
         .getCursor(query)
         .limit(1)
         .next()
         .then((result) => {
           dbDoc = result;
-          userInfo = User.fromDb(dbDoc);
+          userInfo = NativeAuthenticationAuthorityUser.fromDb(dbDoc);
 
           if (!userInfo) {
             locals.send(401, {error: 'login_failed'});
@@ -542,7 +526,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       }
 
       let user;
-      User
+      NativeAuthenticationAuthorityUser
         .getOne({
           [fields.emailDb]: email,
           [fields.domainDb]: domain
@@ -556,7 +540,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         })
         .then(() => bcryptHash(password, bcryptHashRounds))
         .then((pwHash) => {
-          user = new User();
+          user = new NativeAuthenticationAuthorityUser();
 
           user.email = email;
           user.password = pwHash;
@@ -605,7 +589,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           return tokenParts;
         })
         .then(this.decryptToken)
-        .then((token) => User.getById(token.userId, {[fields.emailVerifiedDb]: 1}))
+        .then((token) => NativeAuthenticationAuthorityUser.getById(token.userId, {[fields.emailVerifiedDb]: 1}))
         .then((user: any) => {
           if (!user) {
             throw 403;
@@ -645,7 +629,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       };
 
       let user;
-      User
+      NativeAuthenticationAuthorityUser
         .getOne(query)
         .then((userFound) => {
           if (userFound) {
@@ -689,7 +673,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
             [fields.domainDb]: domain
           };
 
-          return User.getOne(query);
+          return NativeAuthenticationAuthorityUser.getOne(query);
         })
         .then((usr) => {
           user = usr;
@@ -754,7 +738,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
               });
           }
         })
-        .then(() => User.getOne(query))
+        .then(() => NativeAuthenticationAuthorityUser.getOne(query))
         .then((usr) => user = usr)
         .then(() => (user)
           ? this.encryptToken({
@@ -819,7 +803,10 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           }
           token = tkn;
         })
-        .then(() => User.getById(token.userId, {[fields.passwordDb]: 1, [fields.passwordResetHashDb]: 1}))
+        .then(() => NativeAuthenticationAuthorityUser.getById(token.userId, {
+          [fields.passwordDb]: 1,
+          [fields.passwordResetHashDb]: 1
+        }))
         .then((usr) => {
           if (!usr) {
             throw 403;
@@ -929,4 +916,12 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       return pwStrength(pwValue, cd).score;
     }
   }
+
+  return {
+    models: [
+      AuthenticationLog,
+      NativeAuthenticationAuthorityUser
+    ],
+    routables: [AuthenticationAuthorityApi]
+  };
 }
