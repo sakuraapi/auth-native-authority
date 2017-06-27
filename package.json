@@ -1,6 +1,6 @@
 {
   "name": "@sakuraapi/auth-native-authority",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "Middleware to support native authentication capabilities",
   "main": "lib/index.js",
   "types": "lib/index.d.js",
@@ -61,7 +61,7 @@
     "typescript": "^2.3.4"
   },
   "dependencies": {
-    "@sakuraapi/api": "^0.7.0-3",
+    "@sakuraapi/api": "^0.7.0-4",
     "bcrypt": "^1.0.2",
     "colors": "^1.1.2",
     "jsonwebtoken": "^7.4.1",
