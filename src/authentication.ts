@@ -27,15 +27,6 @@ const IV_LENGTH = 16;
  */
 export interface IAuthenticationAuthorityOptions {
   /**
-   * The same database configuration that you're using for your model that represents the collection of MongoDB documents that
-   * store your users.
-   */
-  userDbConfig: {
-    collection: string
-    db: string;
-  };
-
-  /**
    * The database where authTokens are stored so that you have a record of tokes that are issued.
    */
   authDbConfig: {
@@ -44,11 +35,6 @@ export interface IAuthenticationAuthorityOptions {
   };
 
   /**
-   * If set, the system will require email & domain to login the user (a user can belong to multiple domains). If the domain
-   * is not provided, this default value is substituted when looking up the user.
-   */
-  defaultDomain?: string;
-  /**
    * The exponent portion of how many rounds of hashing that bcrypt should go through. Defaults to 12 if not set. See:
    * https://github.com/kelektiv/node.bcrypt.js
    *
@@ -56,6 +42,7 @@ export interface IAuthenticationAuthorityOptions {
    * the computational load.
    */
   bcryptHashRounds?: number;
+
   /**
    * Configuration for user creation
    */
@@ -69,6 +56,40 @@ export interface IAuthenticationAuthorityOptions {
      */
     acceptFields?: any;
   };
+
+  /**
+   * If set, the system will require email & domain to login the user (a user can belong to multiple domains). If the domain
+   * is not provided, this default value is substituted when looking up the user.
+   */
+  defaultDomain?: string;
+
+  /**
+   * Optionally override the various endpoints that make up the different parts of the native auth API. By default,
+   * the following endpoints are assigned:
+   *
+   *    changePassword:          [put] auth/native/change-password
+   *    create:                  [post] auth/native
+   *    emailVerification:       [get] auth/native/confirm/:token
+   *    forgotPassword:          [put] auth/native/forgot-password
+   *    login:                   [post] auth/native/login
+   *    newEmailVerificationKey: [post] auth/native/confirm
+   *    resetPassword:           [put] auth/native/reset-password/:token
+   *
+   *    Remember, these are always built "on top" of your base url set in SakuraApi.
+   *
+   *    Note: if you don't include `:token` in `emailVerification` and `resetPassword`, you're going to have
+   *    a bad time.
+   */
+  endpoints?: {
+    changePassword?: string;
+    create?: string;
+    emailVerification?: string;
+    forgotPassword?: string;
+    login?: string;
+    newEmailVerificationKey?: string;
+    resetPassword?: string;
+  };
+
   /**
    * Lets you override the DB and JSON field names that the auth-native-authority plugin uses.
    */
@@ -102,6 +123,7 @@ export interface IAuthenticationAuthorityOptions {
       dbField?: string;
     }
   };
+
   /**
    * Receives the current payload and the current db results from the user lookup. If you implement this, you should
    * modify the payload with whatever fields you need then resolve the promise with the new payload as the value. This
@@ -139,6 +161,15 @@ export interface IAuthenticationAuthorityOptions {
    * @param token
    */
   onForgotPasswordEmailRequest: (user: any, token: string, req?: Request, res?: Response) => Promise<any>;
+
+  /**
+   * The same database configuration that you're using for your model that represents the collection of MongoDB documents that
+   * store your users.
+   */
+  userDbConfig: {
+    collection: string
+    db: string;
+  };
 }
 
 /**
@@ -168,6 +199,8 @@ export interface IAuthenticationAuthorityOptions {
  * @param options
  */
 export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthenticationAuthorityOptions): SakuraApiModuleResult {
+
+  const endpoints = options.endpoints || {};
 
   if (!options.userDbConfig || !options.userDbConfig.db || !options.userDbConfig.collection) {
     throw new Error('auth-native-authority addAuthenticationAuthority options parameter must have a valid db configuration ' +
@@ -299,16 +332,252 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
   }
 
   @Routable({
-    baseUrl: 'auth/native',
+    // baseUrl: '',
     model: NativeAuthenticationAuthorityUser,
     suppressApi: true
   })
   class AuthenticationAuthorityApi extends SakuraApiRoutable {
 
     /**
+     * Change password
+     */
+    @Route({
+      method: 'put', path: endpoints.changePassword || 'auth/native/change-password'
+    })
+    changePassword(req: Request, res: Response, next: NextFunction) {
+      const locals = res.locals as IRoutableLocals;
+
+      const email = `${locals.reqBody.email}`;
+      const currentPassword = `${locals.reqBody.currentPassword}`;
+      const newPassword = `${locals.reqBody.newPassword}`;
+      const domain = `${locals.reqBody.domain || options.defaultDomain || nativeAuthConfig.defaultDomain}`;
+
+      let user;
+      Promise
+        .resolve()
+        .then(() => {
+          if (!locals.reqBody.email || !locals.reqBody.currentPassword || !locals.reqBody.newPassword) {
+            locals.send(400, {error: 'invalid_body'});
+            throw 400;
+          }
+
+          const query = {
+            [fields.emailDb]: email,
+            [fields.domainDb]: domain
+          };
+
+          return NativeAuthenticationAuthorityUser.getOne(query);
+        })
+        .then((usr) => {
+          user = usr;
+          if (!user) {
+            locals.send(401, {error: 'unauthorized'});
+            throw 401;
+          }
+        })
+        .then(() => compare(currentPassword, user.password))
+        .then((pwMatch) => {
+          if (!pwMatch) {
+            locals.send(401, {error: 'unauthorized'});
+            throw 401;
+          }
+        })
+        .then(() => bcryptHash(newPassword, bcryptHashRounds))
+        .then((pwHash) => {
+          return user.save({
+            [fields.passwordDb]: pwHash,
+            [fields.passwordSetDateDb]: new Date(),
+            [fields.passwordStrengthDb]: this.getPasswordStrength(newPassword, user)
+          });
+        })
+        .then(() => next())
+        .catch((err) => {
+          if (err === 400 || err === 401) {
+            return next();
+          }
+          next(err);
+        });
+    }
+
+    /**
+     * Create a User
+     */
+    @Route({
+      before: (options.onBeforeUserCreate as any),
+      method: 'post', path: endpoints.create || 'auth/native'
+    })
+    create(req: Request, res: Response, next: NextFunction) {
+      const locals = res.locals as IRoutableLocals;
+      const customFields = (options.create || {} as any).acceptFields
+        || (((sapi.config.authentication || {} as any).native || {} as any).create || {} as any).acceptFields;
+
+      const email = `${locals.reqBody.email}`;
+      const password = `${locals.reqBody.password}`;
+      const domain = `${locals.reqBody.domain || options.defaultDomain || nativeAuthConfig.defaultDomain}`;
+
+      if (!email || email === 'undefined') {
+        locals.send(400, {error: 'email address is invalid, check body'});
+        return next();
+      }
+
+      if (!password || password === 'undefined') {
+        locals.send(400, {error: 'password is invalid, check body'});
+        return next();
+      }
+
+      let user;
+      NativeAuthenticationAuthorityUser
+        .getOne({
+          [fields.emailDb]: email,
+          [fields.domainDb]: domain
+        })
+        .then((existingUser) => {
+          // Make sure the user doesn't already exist
+          if (existingUser) {
+            locals.send(409, {error: 'email_in_use'});
+            throw 409;
+          }
+        })
+        .then(() => bcryptHash(password, bcryptHashRounds))
+        .then((pwHash) => {
+          user = new NativeAuthenticationAuthorityUser();
+
+          user.email = email;
+          user.password = pwHash;
+          user.domain = domain;
+          user.emailVerified = false;
+          user.passwordSet = new Date();
+
+          if (customFields) {
+            for (const jsonField of Object.keys(customFields)) {
+              if (locals.reqBody[jsonField] === undefined) {
+                continue;
+              }
+              user[customFields[jsonField]] = locals.reqBody[jsonField];
+            }
+          }
+
+          user.passwordStrength = this.getPasswordStrength(password, user);
+        })
+        .then(() => user.create())
+        .then(() => this.encryptToken({userId: user.id}))
+        .then((emailVerificationKey) => {
+          if (options.onUserCreated && typeof options.onUserCreated === 'function') {
+            options.onUserCreated(user.toJson(), emailVerificationKey, req, res);
+          }
+        })
+        .then(() => next())
+        .catch((err) => {
+          if (err === 409) {
+            return next();
+          }
+          locals.send(500, {error: 'internal_server_error'});
+          next(err);
+        });
+    }
+
+    /**
+     * Verify email - authenticates that user has access to provided email address
+     */
+    @Route({method: 'get', path: endpoints.emailVerification || 'auth/native/confirm/:token'})
+    emailVerification(req: Request, res: Response, next: NextFunction) {
+      const locals = res.locals as IRoutableLocals;
+
+      Promise
+        .resolve()
+        .then(() => {
+          const tokenParts = req.params.token.split('.');
+          if (tokenParts && tokenParts.length !== 3) {
+            throw 403;
+          }
+          return tokenParts;
+        })
+        .then(this.decryptToken)
+        .then((token) => NativeAuthenticationAuthorityUser.getById(token.userId, {[fields.emailVerifiedDb]: 1}))
+        .then((user: any) => {
+          if (!user) {
+            throw 403;
+          }
+
+          if (!user.emailVerified) {
+            return user.save({[fields.emailVerifiedDb]: true});
+          }
+        })
+        .then(() => next())
+        .catch((err) => {
+          if (err === 403) {
+            locals.send(403, {error: 'invalid_token'});
+            return next();
+          }
+          locals.send(500, {error: 'internal_server_error'});
+          return next(err);
+        });
+    }
+
+    /**
+     * Forgot password
+     */
+    @Route({
+      method: 'put', path: endpoints.forgotPassword || 'auth/native/forgot-password'
+    })
+    forgotPassword(req: Request, res: Response, next: NextFunction) {
+      const locals = res.locals as IRoutableLocals;
+
+      const email = `${locals.reqBody.email}`;
+      const domain = `${locals.reqBody.domain || options.defaultDomain || nativeAuthConfig.defaultDomain}`;
+
+      const query = {
+        [fields.emailJson]: email,
+        [fields.domainJson]: domain
+      };
+
+      let user;
+      let token;
+      let tokenHash;
+      Promise
+        .resolve()
+        .then(() => {
+          if (!locals.reqBody.email) {
+            // let the integrator decide what to do in this circumstance
+            return options
+              .onForgotPasswordEmailRequest(undefined, undefined, req, res)
+              .then(() => {
+                throw new Error('invalid');
+              });
+          }
+        })
+        .then(() => NativeAuthenticationAuthorityUser.getOne(query))
+        .then((usr) => user = usr)
+        .then(() => (user)
+          ? this.encryptToken({
+            issued: new Date().getTime(),
+            userId: user.id
+          })
+          : null)
+        .then((tkn) => {
+          if (!tkn) {
+            return;
+          }
+          token = tkn;
+          tokenHash = this.hashToken(token);
+
+          return user.save({[fields.passwordResetHashDb]: tokenHash});
+        })
+        .then(() => options.onForgotPasswordEmailRequest(user, token, req, res))
+        .then(() => next())
+        .catch((err) => {
+          if (err === 'invalid') {
+            return next();
+          }
+          locals.send(500, {error: 'internal_server_error'});
+          next(err);
+        });
+    }
+
+    /**
      * Login a user
      */
-    @Route({method: 'post', path: '/login'})
+    @Route({method: 'post', path: endpoints.login || 'auth/native/login'})
     login(req: Request, res: Response, next: NextFunction) {
 
       const locals = res.locals as IRoutableLocals;
@@ -500,121 +769,10 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     }
 
     /**
-     * Create a User
-     */
-    @Route({
-      before: (options.onBeforeUserCreate as any),
-      method: 'post', path: '/'
-    })
-    create(req: Request, res: Response, next: NextFunction) {
-      const locals = res.locals as IRoutableLocals;
-      const customFields = (options.create || {} as any).acceptFields
-        || (((sapi.config.authentication || {} as any).native || {} as any).create || {} as any).acceptFields;
-
-      const email = `${locals.reqBody.email}`;
-      const password = `${locals.reqBody.password}`;
-      const domain = `${locals.reqBody.domain || options.defaultDomain || nativeAuthConfig.defaultDomain}`;
-
-      if (!email || email === 'undefined') {
-        locals.send(400, {error: 'email address is invalid, check body'});
-        return next();
-      }
-
-      if (!password || password === 'undefined') {
-        locals.send(400, {error: 'password is invalid, check body'});
-        return next();
-      }
-
-      let user;
-      NativeAuthenticationAuthorityUser
-        .getOne({
-          [fields.emailDb]: email,
-          [fields.domainDb]: domain
-        })
-        .then((existingUser) => {
-          // Make sure the user doesn't already exist
-          if (existingUser) {
-            locals.send(409, {error: 'email_in_use'});
-            throw 409;
-          }
-        })
-        .then(() => bcryptHash(password, bcryptHashRounds))
-        .then((pwHash) => {
-          user = new NativeAuthenticationAuthorityUser();
-
-          user.email = email;
-          user.password = pwHash;
-          user.domain = domain;
-          user.emailVerified = false;
-          user.passwordSet = new Date();
-
-          if (customFields) {
-            for (const jsonField of Object.keys(customFields)) {
-              if (locals.reqBody[jsonField] === undefined) {
-                continue;
-              }
-              user[customFields[jsonField]] = locals.reqBody[jsonField];
-            }
-          }
-
-          user.passwordStrength = this.getPasswordStrength(password, user);
-        })
-        .then(() => user.create())
-        .then(() => this.encryptToken({userId: user.id}))
-        .then((emailVerificationKey) => options.onUserCreated(user.toJson(), emailVerificationKey, req, res))
-        .then(() => next())
-        .catch((err) => {
-          if (err === 409) {
-            return next();
-          }
-          locals.send(500, {error: 'internal_server_error'});
-          next(err);
-        });
-    }
-
-    /**
-     * Verify email - authenticates that user has access to provided email address
-     */
-    @Route({method: 'get', path: '/confirm/:token'})
-    emailVerification(req: Request, res: Response, next: NextFunction) {
-      const locals = res.locals as IRoutableLocals;
-
-      Promise
-        .resolve()
-        .then(() => {
-          const tokenParts = req.params.token.split('.');
-          if (tokenParts && tokenParts.length !== 3) {
-            throw 403;
-          }
-          return tokenParts;
-        })
-        .then(this.decryptToken)
-        .then((token) => NativeAuthenticationAuthorityUser.getById(token.userId, {[fields.emailVerifiedDb]: 1}))
-        .then((user: any) => {
-          if (!user) {
-            throw 403;
-          }
-
-          if (!user.emailVerified) {
-            return user.save({[fields.emailVerifiedDb]: true});
-          }
-        })
-        .then(() => next())
-        .catch((err) => {
-          if (err === 403) {
-            locals.send(403, {error: 'invalid_token'});
-            return next();
-          }
-          locals.send(500, {error: 'internal_server_error'});
-          return next(err);
-        });
-    }
-
-    /**
      * send a new email verification key
      */
     @Route({
-      method: 'post', path: '/confirm'
+      method: 'post', path: endpoints.newEmailVerificationKey || 'auth/native/confirm'
     })
     newEmailVerificationKey(req: Request, res: Response, next: NextFunction) {
       const locals = res.locals as IRoutableLocals;
@@ -646,134 +804,13 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     }
 
     /**
-     * Change password
-     */
-    @Route({
-      method: 'put', path: '/change-password'
-    })
-    changePassword(req: Request, res: Response, next: NextFunction) {
-      const locals = res.locals as IRoutableLocals;
-
-      const email = `${locals.reqBody.email}`;
-      const currentPassword = `${locals.reqBody.currentPassword}`;
-      const newPassword = `${locals.reqBody.newPassword}`;
-      const domain = `${locals.reqBody.domain || options.defaultDomain || nativeAuthConfig.defaultDomain}`;
-
-      let user;
-      Promise
-        .resolve()
-        .then(() => {
-          if (!locals.reqBody.email || !locals.reqBody.currentPassword || !locals.reqBody.newPassword) {
-            locals.send(400, {error: 'invalid_body'});
-            throw 400;
-          }
-
-          const query = {
-            [fields.emailDb]: email,
-            [fields.domainDb]: domain
-          };
-
-          return NativeAuthenticationAuthorityUser.getOne(query);
-        })
-        .then((usr) => {
-          user = usr;
-          if (!user) {
-            locals.send(401, {error: 'unauthorized'});
-            throw 401;
-          }
-        })
-        .then(() => compare(currentPassword, user.password))
-        .then((pwMatch) => {
-          if (!pwMatch) {
-            locals.send(401, {error: 'unauthorized'});
-            throw 401;
-          }
-        })
-        .then(() => bcryptHash(newPassword, bcryptHashRounds))
-        .then((pwHash) => {
-          return user.save({
-            [fields.passwordDb]: pwHash,
-            [fields.passwordSetDateDb]: new Date(),
-            [fields.passwordStrengthDb]: this.getPasswordStrength(newPassword, user)
-          });
-        })
-        .then(() => next())
-        .catch((err) => {
-          if (err === 400 || err === 401) {
-            return next();
-          }
-          next(err);
-        });
-    }
-
-    /**
-     * Forgot password
-     */
-    @Route({
-      method: 'put', path: '/forgot-password'
-    })
-    forgotPassword(req: Request, res: Response, next: NextFunction) {
-      const locals = res.locals as IRoutableLocals;
-
-      const email = `${locals.reqBody.email}`;
-      const domain = `${locals.reqBody.domain || options.defaultDomain || nativeAuthConfig.defaultDomain}`;
-
-      const query = {
-        [fields.emailJson]: email,
-        [fields.domainJson]: domain
-      };
-
-      let user;
-      let token;
-      let tokenHash;
-      Promise
-        .resolve()
-        .then(() => {
-          if (!locals.reqBody.email) {
-            // let the integrator decide what to do in this circumstance
-            return options
-              .onForgotPasswordEmailRequest(undefined, undefined, req, res)
-              .then(() => {
-                throw new Error('invalid');
-              });
-          }
-        })
-        .then(() => NativeAuthenticationAuthorityUser.getOne(query))
-        .then((usr) => user = usr)
-        .then(() => (user)
-          ? this.encryptToken({
-            issued: new Date().getTime(),
-            userId: user.id
-          })
-          : null)
-        .then((tkn) => {
-          if (!tkn) {
-            return;
-          }
-          token = tkn;
-          tokenHash = this.hashToken(token);
-
-          return user.save({[fields.passwordResetHashDb]: tokenHash});
-        })
-        .then(() => options.onForgotPasswordEmailRequest(user, token, req, res))
-        .then(() => next())
-        .catch((err) => {
-          if (err === 'invalid') {
-            return next();
-          }
-          locals.send(500, {error: 'internal_server_error'});
-          next(err);
-        });
-    }
-
-    /**
      * resets a forgotten password and sets email verified to true... a user should only be able to peform this task
      * if he/she received a token at their email that let to a portal that send that token back into this
      * endpoint... so, if the user's email verified was false, there's no reason to further pester them to verify their
      * email.
      */
     @Route({
-      method: 'put', path: '/reset-password/:token'
+      method: 'put', path: endpoints.resetPassword || 'auth/native/reset-password/:token'
     })
     resetPassword(req: Request, res: Response, next: NextFunction) {
       const locals = res.locals as IRoutableLocals;
@@ -840,6 +877,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         });
 
     }
+
+    //////////
 
     private encryptToken(keyContent: { [key: string]: any }): Promise<string> {
       return new Promise((resolve, reject) => {
