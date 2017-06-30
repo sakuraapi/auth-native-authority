@@ -163,10 +163,11 @@ export interface IAuthenticationAuthorityOptions {
   onForgotPasswordEmailRequest: (user: any, token: string, req?: Request, res?: Response) => Promise<any>;
 
   /**
-   * Called when the user requests a "change password" email.
+   * Called when the user changes his or her password, allowing the integrator to send an email
+   * to the user notifying them of the password change.
    * @param user
    */
-  onChangePasswordEmailRequest: (user: any, req?: Request, res?: Response) => Promise<any>;
+  onChangePasswordEmailRequest?: (user: any, req?: Request, res?: Response) => Promise<any>;
 
   /**
    * The same database configuration that you're using for your model that represents the collection of MongoDB documents that
@@ -395,7 +396,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
             [fields.passwordStrengthDb]: this.getPasswordStrength(newPassword, user)
           });
         })
-        .then(() => options.onChangePasswordEmailRequest(user, req, res))
+        .then(() => (options.onChangePasswordEmailRequest) ?
+        options.onChangePasswordEmailRequest(user, req, res) : Promise.resolve())
         .then(() => next())
         .catch((err) => {
           if (err === 400 || err === 401) {
