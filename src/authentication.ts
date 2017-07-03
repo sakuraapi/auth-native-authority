@@ -396,8 +396,9 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
             [fields.passwordStrengthDb]: this.getPasswordStrength(newPassword, user)
           });
         })
-        .then(() => (options.onChangePasswordEmailRequest) ?
-        options.onChangePasswordEmailRequest(user, req, res) : Promise.resolve())
+        .then(() => (options.onChangePasswordEmailRequest)
+          ? options.onChangePasswordEmailRequest(user, req, res)
+          : Promise.resolve())
         .then(() => next())
         .catch((err) => {
           if (err === 400 || err === 401) {
