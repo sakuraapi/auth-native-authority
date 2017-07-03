@@ -30,7 +30,8 @@ addAuthenticationAuthority(sapi, {
   onBeforeUserCreate: onBeforeUserCreate,
   onUserCreated: onUserCreated,
   onResendEmailConfirmation: onResendEmailConfirmation,
-  onForgotPasswordEmailRequest: onForgotPasswordEmailRequest
+  onForgotPasswordEmailRequest: onForgotPasswordEmailRequest,
+  onChangePasswordEmailRequest: onChangePasswordEmailRequest
 });
 
 
@@ -84,6 +85,10 @@ function onForgotPasswordEmailRequest(user: any, token: string, req, res): Promi
   // to your server with the token and {"password":"123"} as the body. For example:
   //     PUT localhost:8001/api/auth/native/reset-password/WTtK-g3k-NbikCYxbQ9n97jA.9cXEoJNoMBcxWAGMlB7x4g.x89KcHr0bp-tYkZobbZ10A
   return Promise.resolve();
+}
+
+function onChangePasswordEmailRequest(user: any, req, res): Promise<any> {
+  // send an email after successful password change
 }
 
 ```
