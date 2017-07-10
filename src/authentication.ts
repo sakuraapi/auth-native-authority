@@ -7,7 +7,7 @@ import {
   Route,
   SakuraApi,
   SakuraApiModel,
-  SakuraApiModuleResult,
+  SakuraApiPluginResult,
   SakuraApiRoutable
 } from '@sakuraapi/api';
 import {compare, hash as bcryptHash} from 'bcrypt';
@@ -205,7 +205,7 @@ export interface IAuthenticationAuthorityOptions {
  * @param sapi your server's SakuraApi instance.
  * @param options
  */
-export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthenticationAuthorityOptions): SakuraApiModuleResult {
+export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthenticationAuthorityOptions): SakuraApiPluginResult {
 
   const endpoints = options.endpoints || {};
 
@@ -970,6 +970,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       AuthenticationLog,
       NativeAuthenticationAuthorityUser
     ],
-    routables: [AuthenticationAuthorityApi]
+    routables: [
+      AuthenticationAuthorityApi
+    ]
   };
 }
