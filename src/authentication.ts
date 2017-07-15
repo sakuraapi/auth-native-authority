@@ -191,7 +191,7 @@ export interface IAuthenticationAuthorityOptions {
  *    ...
  * </pre>
  *
- * This will add several endpoints to your server (subordinate to sapi.baseUri):
+ * This will add several endpoints to your server (subordinate to sapi.baseUrl):
  * * POST auth/native - attempts to authenticate a user based on the credentials provided and returns a JWT if authentication
  *   succeeds.
  *
@@ -348,7 +348,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
      * Change password
      */
     @Route({
-      method: 'put', path: endpoints.changePassword || 'auth/native/change-password'
+      method: 'put',
+      path: endpoints.changePassword || 'auth/native/change-password'
     })
     changePassword(req: Request, res: Response, next: NextFunction) {
       const locals = res.locals as IRoutableLocals;
@@ -488,7 +489,10 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     /**
      * Verify email - authenticates that user has access to provided email address
      */
-    @Route({method: 'get', path: endpoints.emailVerification || 'auth/native/confirm/:token'})
+    @Route({
+      method: 'get',
+      path: endpoints.emailVerification || 'auth/native/confirm/:token'
+    })
     emailVerification(req: Request, res: Response, next: NextFunction) {
       const locals = res.locals as IRoutableLocals;
 
@@ -527,7 +531,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
      * Forgot password
      */
     @Route({
-      method: 'put', path: endpoints.forgotPassword || 'auth/native/forgot-password'
+      method: 'put',
+      path: endpoints.forgotPassword || 'auth/native/forgot-password'
     })
     forgotPassword(req: Request, res: Response, next: NextFunction) {
       const locals = res.locals as IRoutableLocals;
@@ -586,7 +591,10 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     /**
      * Login a user
      */
-    @Route({method: 'post', path: endpoints.login || 'auth/native/login'})
+    @Route({
+      method: 'post',
+      path: endpoints.login || 'auth/native/login'
+    })
     login(req: Request, res: Response, next: NextFunction) {
 
       const locals = res.locals as IRoutableLocals;
@@ -781,7 +789,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
      * send a new email verification key
      */
     @Route({
-      method: 'post', path: endpoints.newEmailVerificationKey || 'auth/native/confirm'
+      method: 'post',
+      path: endpoints.newEmailVerificationKey || 'auth/native/confirm'
     })
     newEmailVerificationKey(req: Request, res: Response, next: NextFunction) {
       const locals = res.locals as IRoutableLocals;
@@ -819,7 +828,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
      * email.
      */
     @Route({
-      method: 'put', path: endpoints.resetPassword || 'auth/native/reset-password/:token'
+      method: 'put',
+      path: endpoints.resetPassword || 'auth/native/reset-password/:token'
     })
     resetPassword(req: Request, res: Response, next: NextFunction) {
       const locals = res.locals as IRoutableLocals;
