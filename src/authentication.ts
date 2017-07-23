@@ -17,10 +17,28 @@ import {decode as decodeToken, sign as signToken} from 'jsonwebtoken';
 import {ObjectID} from 'mongodb';
 import {decode as urlBase64Decode, encode as urlBase64Encode, validate as urlBase64Validate} from 'urlsafe-base64';
 import {v4 as uuid} from 'uuid';
-
 import pwStrength = require('zxcvbn');
 
 const IV_LENGTH = 16;
+
+/**
+ * The shame of objects resolved in the Promise returned from [[IAuthenticationAuthorityOptions.onInjectCustomToken]].
+ */
+export interface ICustomTokenResult {
+  /**
+   * The JWT audience this token is being issued for.
+   */
+  audience: string;
+  /**
+   * The JWT (or really anything if your client knows how to deal with it).
+   */
+  token: string;
+  /**
+   * The JWT in its unencoded form. `auth-native-authority` logs tokens in the database upon their creation.
+   * If you include `unEncodedToken`, it will log that. Otherwise, it logs the encoded token.
+   */
+  unEncodedToken?: string;
+}
 
 /**
  * Various options that can be set for initializing the AuthNativeAuthorityApi Module
@@ -125,34 +143,17 @@ export interface IAuthenticationAuthorityOptions {
   };
 
   /**
-   * Receives the current payload and the current db results from the user lookup. If you implement this, you should
-   * modify the payload with whatever fields you need then resolve the promise with the new payload as the value. This
-   * allows you to insert additional information in the resulting JWT token from whatever source you deem appropriate.
-   * @param payload
-   * @param dbResult
-   */
-  onJWTPayloadInject?: (payload: any, dbResult: any) => Promise<any>;
-
-  /**
    * Accepts a Express Handler, or an array of them, to run before user creation. This is helpful if you want to do
    * custom validation.
    */
   onBeforeUserCreate?: Handler | Handler[];
 
   /**
-   * Receives an object of the user just created. Of greatest importance here is validation key. You need to generate
-   * an email and send that to the user in order for them to verify that they have access to the email address they're
-   * claiming.
-   * @param newUser an object of the user just created, minus the hashed password field.
+   * Called when the user changes his or her password, allowing the integrator to send an email
+   * to the user notifying them of the password change.
+   * @param user
    */
-  onUserCreated: (newUser: any, emailVerificationKey: string, req?: Request, res?: Response) => Promise<any>;
-
-  /**
-   * Called when the user needs the email verification key resent.. note that
-   * @param user note: if the requested user doesn't exist, this will be undefined
-   * @param emailVerificationKey note: if the requested user doesn't exist, this will be undefined
-   */
-  onResendEmailConfirmation: (user: any, emailVerificationKey: string, req?: Request, res?: Response) => Promise<any>;
+  onChangePasswordEmailRequest?: (user: any, req?: Request, res?: Response) => Promise<any>;
 
   /**
    * Called when the user requests a "forgot password" email. It will generate a one time use password reset token. Only the
@@ -163,11 +164,44 @@ export interface IAuthenticationAuthorityOptions {
   onForgotPasswordEmailRequest: (user: any, token: string, req?: Request, res?: Response) => Promise<any>;
 
   /**
-   * Called when the user changes his or her password, allowing the integrator to send an email
-   * to the user notifying them of the password change.
-   * @param user
+   * Receives the current payload and the current db results from the user lookup. If you implement this, you should
+   * modify the payload with whatever fields you need then resolve the promise with the new payload as the value. This
+   * allows you to insert additional information in the resulting JWT token from whatever source you deem appropriate.
+   * @param payload
+   * @param dbResult
    */
-  onChangePasswordEmailRequest?: (user: any, req?: Request, res?: Response) => Promise<any>;
+  onJWTPayloadInject?: (payload: any, dbResult: any) => Promise<any>;
+
+  /**
+   * Called when the user needs the email verification key resent.. note that
+   * @param user note: if the requested user doesn't exist, this will be undefined
+   * @param emailVerificationKey note: if the requested user doesn't exist, this will be undefined
+   */
+  onResendEmailConfirmation: (user: any, emailVerificationKey: string, req?: Request, res?: Response) => Promise<any>;
+
+  /**
+   * If implemented, allows custom tokens to be included in the token dictionary sent back to an authenticated user
+   * upon login.
+   *
+   * @param token The current token dictionary that's being returned to the authenticated user. This will contain the
+   * tokens generated up to this point.
+   * @param {string} key The private key that was used to generate the tokens in the token dictionary
+   * @param {string} issuer The issuer that was used to generate the tokens in the token dictionary
+   * @param {string} expiration The expiration that was used to generate the tokens in the token dictionary
+   * @param payload The payload of the tokens generated in the token dictionary
+   * @param {string} jwtId The id that was assigned to the tokens in the token dictionary up to this point
+   * @returns {Promise<ICustomTokenResult[]>} A promise that should resolve an array of ICustomTokenResult which will
+   * be used to add your custom tokens to the token dictionary returned to the user.
+   */
+  onInjectCustomToken: (token: any, key: string, issuer: string, expiration: string, payload: any, jwtId: string) => Promise<ICustomTokenResult[]>;
+
+  /**
+   * Receives an object of the user just created. Of greatest importance here is validation key. You need to generate
+   * an email and send that to the user in order for them to verify that they have access to the email address they're
+   * claiming.
+   * @param newUser an object of the user just created, minus the hashed password field.
+   */
+  onUserCreated: (newUser: any, emailVerificationKey: string, req?: Request, res?: Response) => Promise<any>;
 
   /**
    * The same database configuration that you're using for your model that represents the collection of MongoDB documents that
@@ -209,16 +243,39 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
   const endpoints = options.endpoints || {};
 
+  if (!sapi) {
+    throw new Error('auth-native-authority must have a valid instance of SakuraApi');
+  }
+
   if (!options.userDbConfig || !options.userDbConfig.db || !options.userDbConfig.collection) {
-    throw new Error('auth-native-authority addAuthenticationAuthority options parameter must have a valid db configuration ' +
-      ` - provided value ${JSON.stringify(options)}`);
+    throw new Error('auth-native-authority addAuthenticationAuthority options parameter must have a valid ' +
+      `'userDbConfig' configuration in 'IAuthenticationAuthorityOptions. Provided options ${JSON.stringify(options)}`);
   }
 
   // note, though sapi.config.native is overridden by the options parameter, and the dbConfig must always come from the
   // options parameter.
-  const nativeAuthConfig = ((sapi.config.authentication || {} as any).native || {}) as IAuthenticationAuthorityOptions;
+  const nativeAuthConfig = ((sapi.config.authentication || {} as any).native || null) as IAuthenticationAuthorityOptions;
+  const jwtAuthConfig = (sapi.config.authentication || {} as any).jwt || null;
 
-  const jwtAuthConfig = (sapi.config.authentication || {} as any).jwt || {};
+  if (!nativeAuthConfig) {
+    throw new Error('auth-native-authority requires SakuraApi\'s configuration to have ' +
+      '`authentication.native` set.');
+  }
+
+  if (!jwtAuthConfig) {
+    throw new Error('auth-native-authority requires SakuraApi\'s configuration to have `authentication.jwt` set.');
+  }
+
+  if (!jwtAuthConfig.key) {
+    throw new Error('auth-native-authority requires SakuraApi\'s configuration to have `authentication.jwt.key` set ' +
+      'to a valid AES 256 private key');
+  }
+
+  if (jwtAuthConfig.key.length !== 32) {
+    throw new Error('auth-native-authority requires SakuraApi\'s configuration\'s `authentication.jwt.key` to be ' +
+      `be 32 characters long. The provided key is ${jwtAuthConfig.key.length} characters long`);
+  }
+
   const bcryptHashRounds = options.bcryptHashRounds || nativeAuthConfig.bcryptHashRounds || 12;
 
   // Model Field Name Configuration
@@ -690,15 +747,24 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         });
 
       //////////
-      function buildJwtToken(payload) {
+
+      /**
+       * Takes an object that defines the payload of the token, then generates a token for the issuer
+       * and each of the audience servers supported by this issuer server.
+       * @param payload the JWT payload
+       * @returns {any} An object with each of its properties representing an audience server and each of the values
+       * being the JWT token signed for that audience server.
+       */
+      function buildJwtToken(payload): Promise<any> {
         const key = jwtAuthConfig.key;
         const issuer = jwtAuthConfig.issuer;
         const exp = jwtAuthConfig.exp || '48h';
 
         if (!key || key === '' || !issuer || issuer === '') {
           return Promise
-            .reject(new Error(`unable to proceed, server misconfiguration. authentication.jwt.key value?: '${key}', `
-              + `authentication.jwt.issuer value?: '${issuer}'. These are required fields.`));
+            .reject(new Error(`Unable to proceed, server misconfiguration. 'authentication.jwt.key' length?: ` +
+              `'${key.length}' [note: value redacted for security], ` +
+              `authentication.jwt.issuer value?: '${issuer || '>VALUE MISSING<'}'. These are required fields.`));
         }
 
         // self sign the payload - the issuer should never trust a token passed to it by an audience server since
@@ -717,9 +783,11 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
         const jti = uuid();
 
+        // Issuer Token
         wait.push(generateToken(key, issuer, issuer, exp, payload, jti));
         audiences.push(issuer);
 
+        // Audience Tokens
         const audienceConfig = jwtAuthConfig.audiences;
         if (audienceConfig) {
           for (const jwtAudience of Object.keys(audienceConfig)) {
@@ -734,6 +802,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           }
         }
 
+
         return Promise
           .all(wait)
           .then((jwtTokens) => {
@@ -745,24 +814,45 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
               i++;
             }
 
-            const logAuth = new AuthenticationLog();
-            logAuth.userId = userInfo.id;
+            return (() => (options.onInjectCustomToken)
+              ? options.onInjectCustomToken(token, key, issuer, exp, payload, jti)
+              : Promise.resolve([]))
+            ()
+              .then((customTokens: ICustomTokenResult[]) => {
 
-            logAuth.token = decodeToken(jwtTokens[0]);
-            logAuth.ip = req.ip;
-            logAuth.port = req.connection.remotePort;
-            logAuth.url = req.originalUrl;
-            logAuth.hostName = req.hostname;
+                const customTokensForLog = [];
+                for (let customToken of customTokens) {
+                  token[customToken.audience] = customToken.token;
 
-            logAuth.audience = audiences;
+                  customTokensForLog.push({
+                    audience: `${customToken.audience}`,
+                    token: customToken.unEncodedToken || customToken.token
+                  });
+                }
 
-            logAuth.jwTokenId = jti;
-            logAuth.created = new Date();
+                const logAuth = new AuthenticationLog();
+                logAuth.userId = userInfo.id;
 
-            return logAuth
-              .create()
-              .then(() => {
-                return token;
+                logAuth.token = [{
+                  audience: `${audiences.join(',')}`,
+                  token: decodeToken(jwtTokens[0])
+                }, ...customTokensForLog];
+
+                logAuth.ip = req.ip;
+                logAuth.port = req.connection.remotePort;
+                logAuth.url = req.originalUrl;
+                logAuth.hostName = req.hostname;
+
+                logAuth.audience = audiences;
+
+                logAuth.jwTokenId = jti;
+                logAuth.created = new Date();
+
+                return logAuth
+                  .create()
+                  .then(() => {
+                    return token;
+                  });
               });
           });
       }
@@ -903,7 +993,13 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       return new Promise((resolve, reject) => {
         try {
           const iv = randomBytes(IV_LENGTH);
-          const cipher = createCipheriv('aes-256-gcm', jwtAuthConfig.key, iv);
+          let cipher;
+
+          try {
+            cipher = createCipheriv('aes-256-gcm', jwtAuthConfig.key, iv);
+          } catch (err) {
+            throw new Error(`Invalid JWT private key set in SakuraApi's authorization.jwt.key setting: ${err}`);
+          }
 
           const emailKeyBuffer = Buffer.concat([
             cipher.update(JSON.stringify(keyContent), 'utf8'),
