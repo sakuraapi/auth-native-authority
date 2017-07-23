@@ -21,9 +21,22 @@ import pwStrength = require('zxcvbn');
 
 const IV_LENGTH = 16;
 
-export interface IOnTokenCreationResult {
+/**
+ * The shame of objects resolved in the Promise returned from [[IAuthenticationAuthorityOptions.onInjectCustomToken]].
+ */
+export interface ICustomTokenResult {
+  /**
+   * The JWT audience this token is being issued for.
+   */
   audience: string;
+  /**
+   * The JWT (or really anything if your client knows how to deal with it).
+   */
   token: string;
+  /**
+   * The JWT in its unencoded form. `auth-native-authority` logs tokens in the database upon their creation.
+   * If you include `unEncodedToken`, it will log that. Otherwise, it logs the encoded token.
+   */
   unEncodedToken?: string;
 }
 
@@ -166,7 +179,21 @@ export interface IAuthenticationAuthorityOptions {
    */
   onResendEmailConfirmation: (user: any, emailVerificationKey: string, req?: Request, res?: Response) => Promise<any>;
 
-  onTokenCreation: (token: any, key: string, issuer: string, expiration: string, payload: any, jwtId: string) => Promise<IOnTokenCreationResult[]>;
+  /**
+   * If implemented, allows custom tokens to be included in the token dictionary sent back to an authenticated user
+   * upon login.
+   *
+   * @param token The current token dictionary that's being returned to the authenticated user. This will contain the
+   * tokens generated up to this point.
+   * @param {string} key The private key that was used to generate the tokens in the token dictionary
+   * @param {string} issuer The issuer that was used to generate the tokens in the token dictionary
+   * @param {string} expiration The expiration that was used to generate the tokens in the token dictionary
+   * @param payload The payload of the tokens generated in the token dictionary
+   * @param {string} jwtId The id that was assigned to the tokens in the token dictionary up to this point
+   * @returns {Promise<ICustomTokenResult[]>} A promise that should resolve an array of ICustomTokenResult which will
+   * be used to add your custom tokens to the token dictionary returned to the user.
+   */
+  onInjectCustomToken: (token: any, key: string, issuer: string, expiration: string, payload: any, jwtId: string) => Promise<ICustomTokenResult[]>;
 
   /**
    * Receives an object of the user just created. Of greatest importance here is validation key. You need to generate
@@ -787,11 +814,11 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
               i++;
             }
 
-            return (() => (options.onTokenCreation)
-              ? options.onTokenCreation(token, key, issuer, exp, payload, jti)
+            return (() => (options.onInjectCustomToken)
+              ? options.onInjectCustomToken(token, key, issuer, exp, payload, jti)
               : Promise.resolve([]))
             ()
-              .then((customTokens: IOnTokenCreationResult[]) => {
+              .then((customTokens: ICustomTokenResult[]) => {
 
                 const customTokensForLog = [];
                 for (let customToken of customTokens) {

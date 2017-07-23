@@ -2,7 +2,7 @@ import {Request, Response} from 'express';
 import {agent as request} from 'supertest';
 import {dbs} from '../spec/helpers/db';
 import {testSapi, testUrl} from '../spec/helpers/sakura-api';
-import {addAuthenticationAuthority, IAuthenticationAuthorityOptions, IOnTokenCreationResult} from './authentication';
+import {addAuthenticationAuthority, IAuthenticationAuthorityOptions, ICustomTokenResult} from './authentication';
 
 
 describe('addAuthenticationAuthority', () => {
@@ -150,7 +150,7 @@ describe('addAuthenticationAuthority', () => {
   });
 
 
-  describe('AuthenticationAuthorityApi onTokenCreation token customization', () => {
+  describe('AuthenticationAuthorityApi onInjectCustomToken token customization', () => {
     let sapi;
     let userCreateMeta = {
       newUser: null,
@@ -162,7 +162,7 @@ describe('addAuthenticationAuthority', () => {
         models: [],
         plugins: [{
           options: {
-            onTokenCreation: onTokenCreation,
+            onInjectCustomToken: onInjectCustomToken,
             onUserCreated: onUserCreated
           } as IAuthenticationAuthorityOptions,
           plugin: addAuthenticationAuthority
@@ -197,7 +197,7 @@ describe('addAuthenticationAuthority', () => {
       };
     }
 
-    function onTokenCreation(token: any, key: string, issuer: string, expiration: string, payload: any, jwtId: string): Promise<IOnTokenCreationResult[]> {
+    function onInjectCustomToken(token: any, key: string, issuer: string, expiration: string, payload: any, jwtId: string): Promise<ICustomTokenResult[]> {
       return new Promise((resolve, reject) => {
         resolve([{
           audience: 'third-party-audience.com',
