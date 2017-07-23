@@ -1,9 +1,9 @@
 {
   "name": "@sakuraapi/auth-native-authority",
-  "version": "0.3.0-6",
+  "version": "0.3.0-7",
   "description": "Middleware to support native authentication capabilities",
   "main": "lib/src/index.js",
-  "types": "lib/index.d.js",
+  "types": "lib/src/index.d.js",
   "files": [
     "lib/src/!(*.spec).js",
     "lib/src/!(*.spec).d.ts"
