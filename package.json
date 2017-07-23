@@ -1,6 +1,6 @@
 {
   "name": "@sakuraapi/auth-native-authority",
-  "version": "0.3.0-4",
+  "version": "0.3.0-5",
   "description": "Middleware to support native authentication capabilities",
   "main": "lib/index.js",
   "types": "lib/index.d.js",
@@ -18,7 +18,6 @@
     "build:test": "tsc -p tsconfig.spec.json ; rsync -r --exclude=*.ts spec/config lib/spec",
     "docker:compose-test-up": "(docker volume prune -f || echo \"skipped docker volume prune\") ; docker-compose --file docker/local-test.yml up -d --remove-orphans",
     "docker:compose-test-down": "docker-compose --file docker/local-test.yml down",
-    "install": "chmod u+x scripts/*.sh",
     "istanbul": "istanbul",
     "istanbul:run": "npm run build && npm run build:test && npm run istanbul cover --include-all-sources node_modules/jasmine/bin/jasmine.js",
     "jasmine": "jasmine",
@@ -29,8 +28,8 @@
     "prepublish": "npm run build:clean && npm build && npm test && npm run nsp check",
     "say:fail": "say 'fail' || echo ''",
     "say:pass": "say 'pass' || echo ''",
-    "test": "scripts/test.sh",
-    "test:db": "scripts/test:db.sh",
+    "test": "chmod u+x scripts/*.sh && scripts/test.sh",
+    "test:db": "chmod u+x scripts/*.sh && scripts/test:db.sh",
     "tsc": "tsc",
     "tslint": "tslint"
   },

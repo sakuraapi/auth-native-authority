@@ -8,7 +8,7 @@ export function testSapi(sapiOptions: SakuraApiOptions): SakuraApi {
   sapiOptions.baseUrl = sapiOptions.baseUrl || '/testApi';
 
   if (sapiOptions.plugins) {
-    for (let plugin of sapiOptions.plugins) {
+    for (const plugin of sapiOptions.plugins) {
 
       if (plugin.plugin.name === 'addAuthenticationAuthority') {
         plugin.options = plugin.options || {};
