@@ -193,7 +193,7 @@ export interface IAuthenticationAuthorityOptions {
    * @returns {Promise<ICustomTokenResult[]>} A promise that should resolve an array of ICustomTokenResult which will
    * be used to add your custom tokens to the token dictionary returned to the user.
    */
-  onInjectCustomToken: (token: any, key: string, issuer: string, expiration: string, payload: any, jwtId: string)
+  onInjectCustomToken?: (token: any, key: string, issuer: string, expiration: string, payload: any, jwtId: string)
     => Promise<ICustomTokenResult[]>;
 
   /**
