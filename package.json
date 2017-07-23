@@ -1,19 +1,16 @@
 {
   "name": "@sakuraapi/auth-native-authority",
-  "version": "0.3.0-5",
+  "version": "0.3.0-6",
   "description": "Middleware to support native authentication capabilities",
-  "main": "lib/index.js",
+  "main": "lib/src/index.js",
   "types": "lib/index.d.js",
   "files": [
-    "**/!(*.spec).js",
-    "**/!(*.spec).d.ts",
-    "!spec/**/*",
-    "!docs/**/*",
-    "lib/**"
+    "lib/src/!(*.spec).js",
+    "lib/src/!(*.spec).d.ts"
   ],
   "scripts": {
     "coverage": "npm run istanbul:run && (open coverage/lcov-report/index.html || echo '')",
-    "build": "tsc && npm run build:test",
+    "build": "tsc",
     "build:clean": "mkdir -p lib/ && rm -rf lib/*",
     "build:test": "tsc -p tsconfig.spec.json ; rsync -r --exclude=*.ts spec/config lib/spec",
     "docker:compose-test-up": "(docker volume prune -f || echo \"skipped docker volume prune\") ; docker-compose --file docker/local-test.yml up -d --remove-orphans",

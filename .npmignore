@@ -1,7 +1,1 @@
 *.ts
-*.spec.js
-*.spec.d.ts
-.idea
-docs
-tsconfig.json
-.travis.yml
