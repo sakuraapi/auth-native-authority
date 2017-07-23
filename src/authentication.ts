@@ -193,7 +193,8 @@ export interface IAuthenticationAuthorityOptions {
    * @returns {Promise<ICustomTokenResult[]>} A promise that should resolve an array of ICustomTokenResult which will
    * be used to add your custom tokens to the token dictionary returned to the user.
    */
-  onInjectCustomToken: (token: any, key: string, issuer: string, expiration: string, payload: any, jwtId: string) => Promise<ICustomTokenResult[]>;
+  onInjectCustomToken: (token: any, key: string, issuer: string, expiration: string, payload: any, jwtId: string)
+    => Promise<ICustomTokenResult[]>;
 
   /**
    * Receives an object of the user just created. Of greatest importance here is validation key. You need to generate
@@ -802,7 +803,6 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           }
         }
 
-
         return Promise
           .all(wait)
           .then((jwtTokens) => {
@@ -821,7 +821,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
               .then((customTokens: ICustomTokenResult[]) => {
 
                 const customTokensForLog = [];
-                for (let customToken of customTokens) {
+                for (const customToken of customTokens) {
                   token[customToken.audience] = customToken.token;
 
                   customTokensForLog.push({

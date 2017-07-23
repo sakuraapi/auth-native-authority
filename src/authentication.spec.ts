@@ -2,16 +2,15 @@ import {Request, Response} from 'express';
 import {agent as request} from 'supertest';
 import {dbs} from '../spec/helpers/db';
 import {testSapi, testUrl} from '../spec/helpers/sakura-api';
-import {addAuthenticationAuthority, IAuthenticationAuthorityOptions, ICustomTokenResult} from './authentication';
-
+import {addAuthenticationAuthority, ICustomTokenResult} from './authentication';
 
 describe('addAuthenticationAuthority', () => {
 
   describe('AuthenticationAuthorityApi', () => {
     let sapi;
     let userCreateMeta = {
-      newUser: null,
-      emailVerificationKey: null
+      emailVerificationKey: null,
+      newUser: null
     };
 
     beforeEach((done) => {
@@ -19,7 +18,7 @@ describe('addAuthenticationAuthority', () => {
         models: [],
         plugins: [{
           options: {
-            onUserCreated: onUserCreated
+            onUserCreated
           },
           plugin: addAuthenticationAuthority
         }],
@@ -48,8 +47,8 @@ describe('addAuthenticationAuthority', () => {
 
     function onUserCreated(newUser: any, emailVerificationKey: string, req?: Request, res?: Response) {
       userCreateMeta = {
-        newUser,
-        emailVerificationKey
+        emailVerificationKey,
+        newUser
       };
     }
 
@@ -98,16 +97,16 @@ describe('addAuthenticationAuthority', () => {
         request(sapi.app)
           .post(testUrl('/auth/native', sapi))
           .send({
-            email: email,
-            password: password
+            email,
+            password
           })
           .expect(200)
           .then(() => {
             return request(sapi.app)
               .post(testUrl('/auth/native/login', sapi))
               .send({
-                email: email,
-                password: password
+                email,
+                password
               })
               .expect(403);
           })
@@ -119,8 +118,8 @@ describe('addAuthenticationAuthority', () => {
         request(sapi.app)
           .post(testUrl('/auth/native', sapi))
           .send({
-            email: email,
-            password: password
+            email,
+            password
           })
           .expect(200)
           .then(() => {
@@ -132,8 +131,8 @@ describe('addAuthenticationAuthority', () => {
             return request(sapi.app)
               .post(testUrl('/auth/native/login', sapi))
               .send({
-                email: email,
-                password: password
+                email,
+                password
               })
               .expect(200);
           })
@@ -149,12 +148,11 @@ describe('addAuthenticationAuthority', () => {
     });
   });
 
-
   describe('AuthenticationAuthorityApi onInjectCustomToken token customization', () => {
     let sapi;
     let userCreateMeta = {
-      newUser: null,
-      emailVerificationKey: null
+      emailVerificationKey: null,
+      newUser: null
     };
 
     beforeEach((done) => {
@@ -162,9 +160,9 @@ describe('addAuthenticationAuthority', () => {
         models: [],
         plugins: [{
           options: {
-            onInjectCustomToken: onInjectCustomToken,
-            onUserCreated: onUserCreated
-          } as IAuthenticationAuthorityOptions,
+            onInjectCustomToken,
+            onUserCreated
+          },
           plugin: addAuthenticationAuthority
         }],
         routables: []
@@ -192,12 +190,13 @@ describe('addAuthenticationAuthority', () => {
 
     function onUserCreated(newUser: any, emailVerificationKey: string, req?: Request, res?: Response) {
       userCreateMeta = {
-        newUser,
-        emailVerificationKey
+        emailVerificationKey,
+        newUser
       };
     }
 
-    function onInjectCustomToken(token: any, key: string, issuer: string, expiration: string, payload: any, jwtId: string): Promise<ICustomTokenResult[]> {
+    function onInjectCustomToken(token: any, key: string, issuer: string,
+                                 expiration: string, payload: any, jwtId: string): Promise<ICustomTokenResult[]> {
       return new Promise((resolve, reject) => {
         resolve([{
           audience: 'third-party-audience.com',
@@ -205,9 +204,9 @@ describe('addAuthenticationAuthority', () => {
           'eyJ1c2VyIjoiMTIzMTIzIiwiYXBpU2VjcmV0IjoiMzIxMzIxLTMyMS0zMjEtMzIxLTMyMSIsImlhdCI6MTQ4MTE0OTAwMn0.' +
           'Ds_WzcGI4tVq2oqSical36Ej0L12BC6UA-yCUzAfnd4',
           unEncodedToken: {
-            'user': '123123',
-            'apiSecret': '321321-321-321-321-321',
-            'iat': 1481149002
+            apiSecret: '321321-321-321-321-321',
+            iat: 1481149002,
+            user: '123123'
           }
         }]);
       });
@@ -221,8 +220,8 @@ describe('addAuthenticationAuthority', () => {
         request(sapi.app)
           .post(testUrl('/auth/native', sapi))
           .send({
-            email: email,
-            password: password
+            email,
+            password
           })
           .expect(200)
           .then(() => {
@@ -234,8 +233,8 @@ describe('addAuthenticationAuthority', () => {
             return request(sapi.app)
               .post(testUrl('/auth/native/login', sapi))
               .send({
-                email: email,
-                password: password
+                email,
+                password
               })
               .expect(200);
           })
