@@ -37,7 +37,7 @@ export interface ICustomTokenResult {
    * The JWT in its unencoded form. `auth-native-authority` logs tokens in the database upon their creation.
    * If you include `unEncodedToken`, it will log that. Otherwise, it logs the encoded token.
    */
-  unEncodedToken?: string;
+  unEncodedToken?: any;
 }
 
 /**
