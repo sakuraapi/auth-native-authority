@@ -538,11 +538,10 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         })
         .then(() => user.create())
         .then(() => this.encryptToken({userId: user.id}))
-        .then((emailVerificationKey) => {
-          if (options.onUserCreated && typeof options.onUserCreated === 'function') {
-            options.onUserCreated(user.toJson(), emailVerificationKey, req, res);
-          }
-        })
+        .then((emailVerificationKey) =>
+          (options.onUserCreated && typeof options.onUserCreated === 'function')
+            ? options.onUserCreated(user.toJson(), emailVerificationKey, req, res)
+            : Promise.resolve())
         .then(() => next())
         .catch((err) => {
           if (err === 409) {
