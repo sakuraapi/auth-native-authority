@@ -173,6 +173,15 @@ export interface IAuthenticationAuthorityOptions {
   onJWTPayloadInject?: (payload: any, dbResult: any) => Promise<any>;
 
   /**
+   * Called when a user has successfully logged in. Do whatever you need to, then either resolve the promise to
+   * continue, or reject the promise with either the number 401 or 403 to send an unauthorized or forbidden
+   * response. Any other rejection value will result in a 500. You can also reject with {statusCode:number,
+   * message:string} to have the plugin send the statusCode and message as the response message.
+   * @returns {Promise<void>}
+   */
+  onLoginSuccess?: (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response) => Promise<void>;
+
+  /**
    * Called when the user needs the email verification key resent.. note that
    * @param user note: if the requested user doesn't exist, this will be undefined
    * @param emailVerificationKey note: if the requested user doesn't exist, this will be undefined
@@ -736,13 +745,28 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           }
         })
         .then(buildJwtToken)
+        .then((token) =>
+          (options.onLoginSuccess)
+            ? new Promise((resolve, reject) =>
+              options
+                .onLoginSuccess(userInfo, token, sapi, req, res)
+                .then(() => resolve(token))
+                .catch(reject))
+            : Promise.resolve(token))
         .then((token) => locals.send(200, {token}))
         .then(() => userInfo.save({[fields.lastLoginDb]: new Date()}))
         .then(() => next())
         .catch((err) => {
-          if (err === 401 || err === 403) {
+          if (err.statusCode) {
+            locals.send(err.statusCode, {error: err.message});
             return next();
           }
+
+          if (err === 401 || err === 403) {
+            locals.status = err;
+            return next();
+          }
+
           locals.send(500, {error: 'internal_server_error'});
           return next(err);
         });
