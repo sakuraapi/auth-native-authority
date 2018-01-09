@@ -3,6 +3,7 @@
   "defaultSeverity": "warning",
   "rules": {
     "curly": true,
+    "import-spacing": false,
     "max-classes-per-file": false,
     "member-access": [
       true,
@@ -12,6 +13,7 @@
       true,
       128
     ],
+    "no-implicit-dependencies": false,
     "quotemark": [
       true,
       "single",

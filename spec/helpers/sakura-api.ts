@@ -1,7 +1,38 @@
-import {SakuraApi, SakuraApiOptions} from '@sakuraapi/api';
+import {
+  SakuraApi,
+  SakuraApiOptions
+}             from '@sakuraapi/api';
+import {json} from 'body-parser';
 import 'colors';
-import {dbs} from './db';
-import bodyParser = require('body-parser');
+import {dbs}  from './db';
+
+process.on('uncaughtException', (r) => {
+  // tslint:disable:no-console
+  console.log('Unhandled Rejection'.red.underline);
+  console.log('-'.repeat((process.stdout as any).columns).red);
+  console.log('↓'.repeat((process.stdout as any).columns).zebra.red);
+  console.log('-'.repeat((process.stdout as any).columns).red);
+  console.log(r);
+  console.log('-'.repeat((process.stdout as any).columns).red);
+  console.log('↑'.repeat((process.stdout as any).columns).zebra.red);
+  console.log('-'.repeat((process.stdout as any).columns).red);
+  // tslint:enable:no-console
+  throw r;
+});
+
+process.on('unhandledRejection', (r) => {
+  // tslint:disable:no-console
+  console.log('Unhandled Rejection'.red.underline);
+  console.log('-'.repeat((process.stdout as any).columns).red);
+  console.log('↓'.repeat((process.stdout as any).columns).zebra.red);
+  console.log('-'.repeat((process.stdout as any).columns).red);
+  console.log(r);
+  console.log('-'.repeat((process.stdout as any).columns).red);
+  console.log('↑'.repeat((process.stdout as any).columns).zebra.red);
+  console.log('-'.repeat((process.stdout as any).columns).red);
+  // tslint:enable:no-console
+  throw r;
+});
 
 export function testSapi(sapiOptions: SakuraApiOptions): SakuraApi {
   sapiOptions.configPath = sapiOptions.configPath || 'lib/spec/config/environment.json';
@@ -20,7 +51,7 @@ export function testSapi(sapiOptions: SakuraApiOptions): SakuraApi {
   }
 
   const sapi = new SakuraApi(sapiOptions);
-  sapi.addMiddleware(bodyParser.json());
+  sapi.addMiddleware(json());
 
   if (process.env.TRACE_REQ) {
     sapi.addMiddleware((req, res, next) => {

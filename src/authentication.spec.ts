@@ -1,10 +1,20 @@
-import {SakuraApi} from '@sakuraapi/api';
-import {Request, Response} from 'express';
+import {SakuraApi}        from '@sakuraapi/api';
+import {
+  Request,
+  Response
+}                         from 'express';
 import {agent as request} from 'supertest';
-import {dbs} from '../spec/helpers/db';
-import {testSapi, testUrl} from '../spec/helpers/sakura-api';
-import {addAuthenticationAuthority, ICustomTokenResult} from './authentication';
+import {dbs}              from '../spec/helpers/db';
+import {
+  testSapi,
+  testUrl
+}                         from '../spec/helpers/sakura-api';
+import {
+  addAuthenticationAuthority,
+  ICustomTokenResult
+}                         from './authentication';
 
+// tslint:disable:no-shadowed-variable
 describe('addAuthenticationAuthority', () => {
 
   describe('AuthenticationAuthorityApi', () => {
@@ -183,11 +193,11 @@ describe('addAuthenticationAuthority', () => {
 
       describe('onUserLoginSuccess', () => {
         let loginSuccessMeta = {
-          user: null,
           jwt: null,
-          sapi: null,
           req: null,
-          res: null
+          res: null,
+          sapi: null,
+          user: null
         };
 
         let onLoginSuccessFunc;
@@ -208,7 +218,7 @@ describe('addAuthenticationAuthority', () => {
             }],
             routables: []
           });
-          
+
           sapi
             .listen({bootMessage: ''})
             .then(() => {
@@ -327,7 +337,7 @@ describe('addAuthenticationAuthority', () => {
         it('onUserLoginSuccess reject sends 500 on non-401/403 reject value', (done) => {
           onLoginSuccessFunc = (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response) => {
             loginSuccessMeta = {user, jwt, sapi, req, res};
-            return Promise.reject(777);
+            return Promise.reject(778);
           };
 
           request(sapi.app)
@@ -504,3 +514,4 @@ describe('addAuthenticationAuthority', () => {
     });
   });
 });
+// tslint:enable:no-shadowed-variable
