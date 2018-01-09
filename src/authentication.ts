@@ -1,6 +1,6 @@
 import {
   Db,
-  IAuthenticator,
+  IAuthenticatorConstructor,
   IRoutableLocals,
   Json,
   Model,
@@ -69,7 +69,7 @@ export interface IAuthenticationAuthorityOptions {
   /**
    * The authenticators to use for various endpoints that ought to be secure.
    */
-  authenticator: IAuthenticator[] | IAuthenticator;
+  authenticator: IAuthenticatorConstructor[] | IAuthenticatorConstructor;
 
   /**
    * The database where authTokens are stored so that you have a record of tokes that are issued.
