@@ -1,21 +1,43 @@
 import {
   Db,
+  IAuthenticator,
   IRoutableLocals,
   Json,
   Model,
   Routable,
   Route,
   SakuraApi,
-  SakuraApiModel,
   SakuraApiPluginResult,
-  SakuraApiRoutable
-} from '@sakuraapi/api';
-import {compare, hash as bcryptHash} from 'bcrypt';
-import {createCipheriv, createDecipheriv, createHash, createHmac, randomBytes} from 'crypto';
-import {Handler, NextFunction, Request, Response} from 'express';
-import {decode as decodeToken, sign as signToken} from 'jsonwebtoken';
-import {ObjectID} from 'mongodb';
-import {decode as urlBase64Decode, encode as urlBase64Encode, validate as urlBase64Validate} from 'urlsafe-base64';
+  SapiModelMixin,
+  SapiRoutableMixin
+}                   from '@sakuraapi/api';
+import {
+  compare,
+  hash as bcryptHash
+}                   from 'bcrypt';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  randomBytes
+}                   from 'crypto';
+import {
+  Handler,
+  NextFunction,
+  Request,
+  Response
+}                   from 'express';
+import {
+  decode as decodeToken,
+  sign as signToken
+}                   from 'jsonwebtoken';
+import {ObjectID}   from 'mongodb';
+import {
+  decode as urlBase64Decode,
+  encode as urlBase64Encode,
+  validate as urlBase64Validate
+}                   from 'urlsafe-base64';
 import {v4 as uuid} from 'uuid';
 import pwStrength = require('zxcvbn');
 
@@ -44,6 +66,11 @@ export interface ICustomTokenResult {
  * Various options that can be set for initializing the AuthNativeAuthorityApi Module
  */
 export interface IAuthenticationAuthorityOptions {
+  /**
+   * The authenticators to use for various endpoints that ought to be secure.
+   */
+  authenticator: IAuthenticator[] | IAuthenticator;
+
   /**
    * The database where authTokens are stored so that you have a record of tokes that are issued.
    */
@@ -154,6 +181,8 @@ export interface IAuthenticationAuthorityOptions {
    * @param user
    */
   onChangePasswordEmailRequest?: (user: any, req?: Request, res?: Response) => Promise<any>;
+
+  onError?: (err: Error) => Promise<any>;
 
   /**
    * Called when the user requests a "forgot password" email. It will generate a one time use password reset token. Only the
@@ -343,7 +372,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       promiscuous: true
     }
   })
-  class NativeAuthenticationAuthorityUser extends SakuraApiModel {
+  class NativeAuthenticationAuthorityUser extends SapiModelMixin() {
     @Db(fields.emailDb) @Json(fields.emailJson)
     email: string;
 
@@ -370,7 +399,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       promiscuous: true
     }
   })
-  class AuthenticationLog extends SakuraApiModel {
+  class AuthenticationLog extends SapiModelMixin() {
     @Db('uid') @Json()
     userId: ObjectID;
 
@@ -409,12 +438,13 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     model: NativeAuthenticationAuthorityUser,
     suppressApi: true
   })
-  class AuthenticationAuthorityApi extends SakuraApiRoutable {
+  class AuthenticationAuthorityApi extends SapiRoutableMixin() {
 
     /**
      * Change password
      */
     @Route({
+      authenticator: options.authenticator,
       method: 'put',
       path: endpoints.changePassword || 'auth/native/change-password'
     })
@@ -468,11 +498,16 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           ? options.onChangePasswordEmailRequest(user, req, res)
           : Promise.resolve())
         .then(() => next())
-        .catch((err) => {
+        .catch(async (err) => {
           if (err === 400 || err === 401) {
             return next();
           }
-          next(err);
+
+          if (options.onError) {
+            await options.onError(err);
+          }
+
+          next();
         });
     }
 
@@ -543,12 +578,17 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
             ? options.onUserCreated(user.toJson(), emailVerificationKey, req, res)
             : Promise.resolve())
         .then(() => next())
-        .catch((err) => {
+        .catch(async (err) => {
           if (err === 409) {
             return next();
           }
           locals.send(500, {error: 'internal_server_error'});
-          next(err);
+
+          if (options.onError) {
+            await options.onError(err);
+          }
+
+          next();
         });
     }
 
@@ -583,13 +623,18 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           }
         })
         .then(() => next())
-        .catch((err) => {
+        .catch(async (err) => {
           if (err === 403) {
             locals.send(403, {error: 'invalid_token'});
             return next();
           }
           locals.send(500, {error: 'internal_server_error'});
-          return next(err);
+
+          if (options.onError) {
+            await options.onError(err);
+          }
+
+          return next();
         });
     }
 
@@ -645,12 +690,17 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         })
         .then(() => options.onForgotPasswordEmailRequest(user, token, req, res))
         .then(() => next())
-        .catch((err) => {
+        .catch(async (err) => {
           if (err === 'invalid') {
             return next();
           }
           locals.send(500, {error: 'internal_server_error'});
-          next(err);
+
+          if (options.onError) {
+            await options.onError(err);
+          }
+
+          next();
         });
     }
 
@@ -744,18 +794,20 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           }
         })
         .then(buildJwtToken)
-        .then((token) =>
+        .then(async (token) =>
           (options.onLoginSuccess)
             ? new Promise((resolve, reject) =>
               options
                 .onLoginSuccess(userInfo, token, sapi, req, res)
                 .then(() => resolve(token))
-                .catch(reject))
+                .catch((err) => {
+                  reject(err);
+                }))
             : Promise.resolve(token))
         .then((token) => locals.send(200, {token}))
         .then(() => userInfo.save({[fields.lastLoginDb]: new Date()}))
         .then(() => next())
-        .catch((err) => {
+        .catch(async (err) => {
           if (err.statusCode) {
             locals.send(err.statusCode, {error: err.message});
             return next();
@@ -767,7 +819,12 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           }
 
           locals.send(500, {error: 'internal_server_error'});
-          return next(err);
+
+          if (options.onError) {
+            await options.onError(err);
+          }
+
+          return next();
         });
 
       //////////
@@ -928,9 +985,14 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         })
         .then((key) => options.onResendEmailConfirmation(user, key, req, res))
         .then(() => next())
-        .catch((err) => {
+        .catch(async (err) => {
           locals.send(500, {error: 'internal_server_error'});
-          next(err);
+
+          if (options.onError) {
+            options.onError(err);
+          }
+
+          next();
         });
     }
 
@@ -995,7 +1057,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           [fields.passwordStrengthDb]: pwStrength(password).score
         }))
         .then(() => next())
-        .catch((err) => {
+        .catch(async (err) => {
           if (err === 400) {
             locals.send(400, {error: 'bad_request'});
             return next();
@@ -1005,7 +1067,12 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
             return next();
           }
           locals.send(500, {error: 'internal_server_error'});
-          return next(err);
+
+          if (options.onError) {
+            options.onError(err);
+          }
+
+          return next();
         });
 
     }

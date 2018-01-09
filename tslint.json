@@ -3,6 +3,7 @@
   "defaultSeverity": "warning",
   "rules": {
     "curly": true,
+    "import-spacing": false,
     "max-classes-per-file": false,
     "member-access": [
       true,
