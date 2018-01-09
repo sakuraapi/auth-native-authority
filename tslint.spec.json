@@ -13,6 +13,7 @@
       true,
       128
     ],
+    "no-implicit-dependencies": false,
     "quotemark": [
       true,
       "single",

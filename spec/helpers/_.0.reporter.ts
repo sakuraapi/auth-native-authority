@@ -1,8 +1,12 @@
-import {DisplayProcessor, SpecReporter} from 'jasmine-spec-reporter';
+// tslint:disable:no-submodule-imports
+import {
+  DisplayProcessor,
+  SpecReporter
+} from 'jasmine-spec-reporter';
 import 'source-map-support/register';
 import SuiteInfo = jasmine.SuiteInfo;
 
-import path = require('path');
+// tslint:enable:no-submodule-imports
 
 class CustomProcessor extends DisplayProcessor {
   displayJasmineStarted(info: SuiteInfo, log: string): string {

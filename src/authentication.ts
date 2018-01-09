@@ -1149,7 +1149,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         }
       }
 
-      /** See: https://github.com/dropbox/zxcvbn
+      /**
+       * See: https://github.com/dropbox/zxcvbn
        * 0 # too guessable: risky password. (guesses < 10^3)
        * 1 # very guessable: protection from throttled online attacks. (guesses < 10^6)
        * 2 # somewhat guessable: protection from unthrottled online attacks. (guesses < 10^8)
