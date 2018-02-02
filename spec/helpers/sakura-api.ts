@@ -1,7 +1,7 @@
 import {
   SakuraApi,
   SakuraApiOptions
-}             from '@sakuraapi/api';
+}             from '@sakuraapi/core';
 import {json} from 'body-parser';
 import 'colors';
 import {dbs}  from './db';

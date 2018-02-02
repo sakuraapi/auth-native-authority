@@ -10,7 +10,7 @@ import {
   SakuraApiPluginResult,
   SapiModelMixin,
   SapiRoutableMixin
-}                   from '@sakuraapi/api';
+}                   from '@sakuraapi/core';
 import {
   compare,
   hash as bcryptHash

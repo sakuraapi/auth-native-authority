@@ -1,4 +1,4 @@
-import {SakuraApi}        from '@sakuraapi/api';
+import {SakuraApi}        from '@sakuraapi/core';
 import {
   Request,
   Response
