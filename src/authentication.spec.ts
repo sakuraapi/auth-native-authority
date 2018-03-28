@@ -1,31 +1,73 @@
-import {SakuraApi}        from '@sakuraapi/core';
+import {
+  IRoutableLocals,
+  SakuraApi
+}                                  from '@sakuraapi/core';
+import {
+  createCipheriv,
+  randomBytes
+}                                  from 'crypto';
 import {
   Request,
   Response
-}                         from 'express';
-import {agent as request} from 'supertest';
-import {dbs}              from '../spec/helpers/db';
+}                                  from 'express';
+import {agent as request}          from 'supertest';
+import {encode as urlBase64Encode} from 'urlsafe-base64';
+import {dbs}                       from '../spec/helpers/db';
 import {
   testSapi,
   testUrl
-}                         from '../spec/helpers/sakura-api';
+}                                  from '../spec/helpers/sakura-api';
 import {
   addAuthenticationAuthority,
   ICustomTokenResult
-}                         from './authentication';
+}                                  from './authentication';
 
-// tslint:disable:no-shadowed-variable
+const TEST_DOMAIN = 'default';
+const TEST_EMAIL = 'sakura-test@sakuraapi.com';
+const TEST_PASSWORD = '123';
+
 describe('addAuthenticationAuthority', () => {
+
+  let sapi: SakuraApi;
+
+  afterEach(async (done) => {
+    if (!sapi) {
+      return done();
+    }
+    
+    await sapi
+      .dbConnections
+      .getDb('user')
+      .collection(dbs.user.collection)
+      .deleteMany({})
+      .catch(done.fail);
+
+    sapi
+      .close()
+      .then(() => sapi = null)
+      .then(done)
+      .catch(done.fail);
+  });
 
   describe('AuthenticationAuthorityApi', () => {
 
-    describe('create', () => {
-      let sapi;
+    describe('changePassword', () => {
+      const endpoint = '/auth/native/change-password';
+      let onChangePasswordEmailRequestCalled = false;
+      let results: any;
 
       beforeEach((done) => {
+
         sapi = testSapi({
           models: [],
           plugins: [{
+            options: {
+              bcryptHashRounds: 1,
+              onChangePasswordEmailRequest: async (user, req, res, domain) => {
+                onChangePasswordEmailRequestCalled = true;
+                results = {domain, user};
+              }
+            },
             plugin: addAuthenticationAuthority
           }],
           routables: []
@@ -33,44 +75,152 @@ describe('addAuthenticationAuthority', () => {
 
         sapi
           .listen({bootMessage: ''})
-          .then(() => {
-            return sapi
-              .dbConnections
-              .getDb('user')
-              .collection(dbs.user.collection)
-              .deleteMany({});
+          .then(done)
+          .catch(done.fail);
+      });
+
+      afterEach(() => onChangePasswordEmailRequestCalled = false);
+
+      it('returns 400 with invalid body', (done) => {
+        request(sapi.app)
+          .put(testUrl(endpoint, sapi))
+          .expect(400)
+          .then(done)
+          .catch(done.fail);
+      });
+
+      it('returns 401 when user not found', (done) => {
+        request(sapi.app)
+          .put(testUrl(endpoint, sapi))
+          .expect(401)
+          .send({
+            currentPassword: TEST_PASSWORD,
+            email: TEST_EMAIL,
+            newPassword: '123'
           })
           .then(done)
           .catch(done.fail);
       });
 
-      afterEach((done) => {
-        sapi
-          .close()
+      it('returns 401 when user password is invalid', async (done) => {
+        await createTestUser(sapi).catch(done.fail);
+
+        request(sapi.app)
+          .put(testUrl(endpoint, sapi))
+          .send({
+            currentPassword: TEST_PASSWORD + 'fail',
+            email: TEST_EMAIL,
+            newPassword: '123'
+          })
+          .expect(401)
           .then(done)
           .catch(done.fail);
       });
 
-      it('inserts a user when the create endpoint is called', (done) => {
-        request(sapi.app)
-          .post(testUrl('/auth/native', sapi))
+      it('calls onChangePasswordEmailRequest when provided', async (done) => {
+        await createTestUser(sapi).catch(done.fail);
+
+        await request(sapi.app)
+          .put(testUrl(endpoint, sapi))
           .send({
-            email: 'sakura-test@sakuraapi.com',
-            password: '123'
+            currentPassword: TEST_PASSWORD,
+            domain: TEST_DOMAIN,
+            email: TEST_EMAIL,
+            newPassword: '123'
           })
           .expect(200)
-          .then(() => {
-            return sapi
-              .dbConnections
-              .getDb('user')
-              .collection(dbs.user.collection)
-              .find({})
-              .limit(1)
-              .next();
+          .catch(done.fail);
+
+        expect(onChangePasswordEmailRequestCalled).toBeTruthy();
+        expect(results.user).toBeDefined();
+        expect(results.user.email).toBe(TEST_EMAIL);
+        expect(results.domain).toBe(TEST_DOMAIN);
+
+        done();
+      });
+    });
+
+    describe('create', () => {
+      let onBeforeUserCreateCalled = false;
+      let results: any = {};
+
+      beforeEach(async (done) => {
+        sapi = testSapi({
+          models: [],
+          plugins: [{
+            options: {
+              bcryptHashRounds: 1,
+              onBeforeUserCreate: (req, res, next) => {
+                onBeforeUserCreateCalled = true;
+                next();
+              },
+              onUserCreated: async (newUser: any, emailVerificationKey: string, req?: Request, res?: Response, domain?: string) => {
+                results = {
+                  domain,
+                  newUser
+                };
+              }
+            },
+            plugin: addAuthenticationAuthority
+          }],
+          routables: []
+        });
+
+        await sapi.listen({bootMessage: ''});
+        done();
+      });
+
+      afterEach(() => {
+        onBeforeUserCreateCalled = false;
+        results = null;
+      });
+
+      it('returns 400 when missing email', async (done) => {
+        const result: any = await request(sapi.app)
+          .post(testUrl('/auth/native', sapi))
+          .expect(400)
+          .catch(done.fail);
+
+        expect(result.body.error).toBe('email address is invalid, check body');
+        done();
+      });
+
+      it('returns 400 when missing password', async (done) => {
+
+        const result: any = await request(sapi.app)
+          .post(testUrl('/auth/native', sapi))
+          .send({
+            email: 'test'
           })
+          .expect(400)
+          .catch(done.fail);
+
+        expect(result.body.error).toBe('password is invalid, check body');
+        done();
+      });
+
+      it('returns 409 on attempting to create a user that exists', async (done) => {
+        const user = await createTestUser(sapi).catch(done.fail);
+
+        const result = await request(sapi.app)
+          .post(testUrl('/auth/native', sapi))
+          .send({
+            domain: TEST_DOMAIN,
+            email: TEST_EMAIL,
+            password: TEST_PASSWORD
+          })
+          .expect(409);
+
+        expect(result.body.error).toBe('email_in_use');
+
+        done();
+      });
+
+      it('creates a user', (done) => {
+        createTestUser(sapi)
           .then((user) => {
             expect(user).toBeDefined('user was not inserted');
-            expect(user.email).toBe('sakura-test@sakuraapi.com');
+            expect(user.email).toBe(TEST_EMAIL);
             expect(user.emailVerified).toBeFalsy('emailVerified should be false until user verifies');
             expect(user.pw.split('$').length).toBe(4, 'Improperly formatted token, it should be bcrypt hashed');
           })
@@ -78,31 +228,198 @@ describe('addAuthenticationAuthority', () => {
           .catch(done.fail);
       });
 
-      it('returns 400 when missing required fields', (done) => {
-        request(sapi.app)
-          .post(testUrl('/auth/native', sapi))
-          .expect(400)
-          .then(done)
-          .catch(done.fail);
+      it('calls onUserCreated if provided', async (done) => {
+
+        await createTestUser(sapi).catch(done.fail);
+
+        expect(results).toBeDefined();
+        expect(results.domain).toBe(TEST_DOMAIN);
+        expect(results.newUser.email).toBe(TEST_EMAIL);
+
+        done();
+      });
+
+      it('calls onBeforeUserCreate if provided', async (done) => {
+        await createTestUser(sapi).catch(done.fail);
+
+        expect(onBeforeUserCreateCalled).toBeTruthy();
+
+        done();
       });
     });
 
-    describe('login', () => {
-      const email = 'sakura-test@sakuraapi.com';
-      const password = '123';
+    describe('emailVerification', () => {
+      const endpoint = '/auth/native/confirm';
 
-      let sapi;
+      beforeEach((done) => {
+        sapi = testSapi({
+          models: [],
+          plugins: [{
+            options: {
+              bcryptHashRounds: 1
+            },
+            plugin: addAuthenticationAuthority
+          }],
+          routables: []
+        });
+
+        sapi
+          .listen({bootMessage: ''})
+          .then(done)
+          .catch(done.fail);
+      });
+
+      it('returns 403 if token is invalid', async (done) => {
+        const result: any = await request(sapi.app)
+          .get(testUrl(`${endpoint}/123`, sapi))
+          .expect(403)
+          .catch(done.fail);
+
+        expect(result.body.error).toBe('invalid_token');
+        done();
+      });
+
+      it('returns 403 if it cannot find the user', async (done) => {
+
+        const token = await encryptToken({userId: '123'}, sapi).catch(done.fail);
+
+        const result: any = await request(sapi.app)
+          .get(testUrl(`${endpoint}/${token}`, sapi))
+          .expect(403);
+
+        expect(result.body.error).toBe('invalid_token');
+        done();
+      });
+
+      it('switches a user to email verified when provided a proper token', async (done) => {
+        const user = await createTestUser(sapi);
+
+        expect(user.emailVerified).toBeFalsy();
+
+        const token = await encryptToken({userId: user._id, test: true}, sapi).catch(done.fail);
+
+        await request(sapi.app)
+          .get(testUrl(`${endpoint}/${token}`, sapi))
+          .expect(200)
+          .catch(done.fail);
+
+        const updatedUser = await sapi
+          .dbConnections
+          .getDb('user')
+          .collection(dbs.user.collection)
+          .findOne({_id: user._id});
+
+        expect(updatedUser.emailVerified).toBeTruthy();
+
+        done();
+      });
+    });
+
+    describe('forgotPassword', () => {
+      const endpoint = '/auth/native/forgot-password';
+      let results = null;
+
+      beforeEach((done) => {
+        sapi = testSapi({
+          models: [],
+          plugins: [{
+            options: {
+              bcryptHashRounds: 1,
+              onForgotPasswordEmailRequest: async (user: any, token: string, req?: Request, res?: Response, domain?: string) => {
+                results = {
+                  domain,
+                  token,
+                  user
+                };
+                const locals = res.locals as IRoutableLocals;
+                locals.send(222, {pass: true});
+              }
+            },
+            plugin: addAuthenticationAuthority
+          }],
+          routables: []
+        });
+
+        sapi
+          .listen({bootMessage: ''})
+          .then(done)
+          .catch(done.fail);
+      });
+
+      afterEach(() => results = null);
+
+      it('calls onForgotPasswordEmailRequest with  user & token null, allowing custom response code', async (done) => {
+        const result: any = await request(sapi.app)
+          .put(testUrl(endpoint, sapi))
+          .send({domain: TEST_DOMAIN})
+          .expect(222)
+          .catch(done.fail);
+
+        expect(results.domain).toBe(TEST_DOMAIN);
+        expect(results.user).toBeUndefined();
+        expect(results.token).toBeUndefined();
+        expect(result.body.pass).toBeTruthy();
+        done();
+      });
+
+      it('valid request with unknown email/domain calls onForgotPasswordEmailRequest with user & token ' +
+        'null, allowing custom response code', async (done) => {
+
+        const result: any = await request(sapi.app)
+          .put(testUrl(endpoint, sapi))
+          .send({
+            email: TEST_EMAIL,
+            domain: TEST_DOMAIN
+          })
+          .expect(222)
+          .catch(done.fail);
+
+        expect(results.domain).toBe(TEST_DOMAIN);
+        expect(results.user).toBeUndefined();
+        expect(results.token).toBeUndefined();
+        expect(result.body.pass).toBeTruthy();
+
+        done();
+      });
+
+      it('generates a forgot password token when provided a valid email', async (done) => {
+        const user = await createTestUser(sapi).catch(done.fail);
+
+        expect(user.pwResetId).toBeUndefined();
+
+        const result: any = await request(sapi.app)
+          .put(testUrl(endpoint, sapi))
+          .send({
+            email: TEST_EMAIL,
+            domain: TEST_DOMAIN
+          })
+          .expect(222)
+          .catch(done.fail);
+
+        const updatedUser = await sapi
+          .dbConnections
+          .getDb('user')
+          .collection(dbs.user.collection)
+          .findOne({_id: user._id});
+
+        expect(results.domain).toBe(TEST_DOMAIN);
+        expect(results.user.id.toString()).toBe(user._id.toString());
+        expect(results.token.split('.').length).toBe(3);
+        expect(updatedUser.pwResetId).toBeDefined();
+        expect(result.body.pass).toBeTruthy();
+
+        done();
+      });
+
+    });
+
+    describe('login', () => {
+      const endpoint = '/auth/native/login';
+
       let userCreateMeta = {
         emailVerificationKey: null,
         newUser: null
       };
-
-      afterEach((done) => {
-        sapi
-          .close()
-          .then(done)
-          .catch(done.fail);
-      });
 
       function onUserCreated(newUser: any, emailVerificationKey: string, req?: Request, res?: Response) {
         userCreateMeta = {
@@ -112,82 +429,70 @@ describe('addAuthenticationAuthority', () => {
       }
 
       describe('response behavior', () => {
-        beforeEach((done) => {
-          sapi = testSapi({
-            models: [],
-            plugins: [{
-              options: {
-                onUserCreated
-              },
-              plugin: addAuthenticationAuthority
-            }],
-            routables: []
-          });
+        beforeEach(async (done) => {
+          try {
+            sapi = testSapi({
+              models: [],
+              plugins: [{
+                options: {
+                  bcryptHashRounds: 1,
+                  onUserCreated
+                },
+                plugin: addAuthenticationAuthority
+              }],
+              routables: []
+            });
 
-          sapi
-            .listen({bootMessage: ''})
-            .then(() => {
-              return sapi
-                .dbConnections
-                .getDb('user')
-                .collection(dbs.user.collection)
-                .deleteMany({});
-            })
-            .then(done)
-            .catch(done.fail);
+            await sapi.listen({bootMessage: ''});
+
+            done();
+          } catch (err) {
+            done.fail(err);
+          }
+
         });
 
-        it('returns 403 for new user who has not yet confirmed email', (done) => {
-          request(sapi.app)
-            .post(testUrl('/auth/native', sapi))
+        it('returns 403 for new user who has not yet confirmed email', async (done) => {
+
+          await createTestUser(sapi).catch(done.fail);
+
+          await request(sapi.app)
+            .post(testUrl(endpoint, sapi))
             .send({
-              email,
-              password
+              domain: TEST_DOMAIN,
+              email: TEST_EMAIL,
+              password: TEST_PASSWORD
             })
-            .expect(200)
-            .then(() => {
-              return request(sapi.app)
-                .post(testUrl('/auth/native/login', sapi))
-                .send({
-                  email,
-                  password
-                })
-                .expect(403);
-            })
-            .then(done)
+            .expect(403)
             .catch(done.fail);
+
+          done();
         });
 
-        it('returns authentications tokens for authenticated user', (done) => {
-          request(sapi.app)
-            .post(testUrl('/auth/native', sapi))
+        it('returns authentications tokens for authenticated user', async (done) => {
+          await createTestUser(sapi).catch(done.fail);
+
+          await request(sapi.app)
+            .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
+            .expect(200)
+            .catch(done.fail);
+
+          const result: any = await request(sapi.app)
+            .post(testUrl('/auth/native/login', sapi))
             .send({
-              email,
-              password
+              domain: TEST_DOMAIN,
+              email: TEST_EMAIL,
+              password: TEST_PASSWORD
             })
             .expect(200)
-            .then(() => {
-              return request(sapi.app)
-                .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
-                .expect(200);
-            })
-            .then(() => {
-              return request(sapi.app)
-                .post(testUrl('/auth/native/login', sapi))
-                .send({
-                  email,
-                  password
-                })
-                .expect(200);
-            })
-            .then((result) => {
-              const body = result.body;
-              const token = result.body.token['test-issuer'];
-              expect(token).toBeDefined();
-              expect(token.split('.').length).toBe(3, 'Token should have been JWT formatted');
-            })
-            .then(done)
             .catch(done.fail);
+
+          const body = result.body;
+          const token = result.body.token['test-issuer'];
+          expect(token).toBeDefined();
+          expect(token.split('.').length).toBe(3, 'Token should have been JWT formatted');
+
+          done();
         });
       });
 
@@ -197,13 +502,14 @@ describe('addAuthenticationAuthority', () => {
           req: null,
           res: null,
           sapi: null,
-          user: null
+          user: null,
+          domain: null
         };
 
         let onLoginSuccessFunc;
 
-        function onLoginSuccess(user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response): Promise<void> {
-          return onLoginSuccessFunc(user, jwt, sapi, req, res);
+        function onLoginSuccess(user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response, domain?: string): Promise<void> {
+          return onLoginSuccessFunc(user, jwt, sapi, req, res, domain);
         }
 
         beforeEach((done) => {
@@ -211,6 +517,7 @@ describe('addAuthenticationAuthority', () => {
             models: [],
             plugins: [{
               options: {
+                bcryptHashRounds: 1,
                 onLoginSuccess,
                 onUserCreated
               },
@@ -221,187 +528,229 @@ describe('addAuthenticationAuthority', () => {
 
           sapi
             .listen({bootMessage: ''})
-            .then(() => {
-              return sapi
-                .dbConnections
-                .getDb('user')
-                .collection(dbs.user.collection)
-                .deleteMany({});
-            })
             .then(done)
             .catch(done.fail);
         });
 
-        it('onUserLoginSuccess resolve', (done) => {
+        it('onUserLoginSuccess resolve', async (done) => {
 
-          onLoginSuccessFunc = (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response) => {
-            loginSuccessMeta = {user, jwt, sapi, req, res};
+          onLoginSuccessFunc = (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
+            loginSuccessMeta = {user, jwt, sapi, req, res, domain};
             return Promise.resolve();
           };
 
-          request(sapi.app)
-            .post(testUrl('/auth/native', sapi))
+          await createTestUser(sapi).catch(done.fail);
+
+          await request(sapi.app)
+            .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
+            .expect(200)
+            .catch(done.fail);
+
+          await request(sapi.app)
+            .post(testUrl('/auth/native/login', sapi))
             .send({
-              email,
-              password
+              domain: TEST_DOMAIN,
+              email: TEST_EMAIL,
+              password: TEST_PASSWORD
             })
             .expect(200)
-            .then(() => {
-              return request(sapi.app)
-                .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
-                .expect(200);
-            })
-            .then(() => {
-              return request(sapi.app)
-                .post(testUrl('/auth/native/login', sapi))
-                .send({
-                  email,
-                  password
-                })
-                .expect(200);
-            })
-            .then(() => {
-              expect(loginSuccessMeta.user.constructor.name).toBe('NativeAuthenticationAuthorityUser');
-              expect(loginSuccessMeta.sapi.constructor.name).toBe('SakuraApi');
-              expect(loginSuccessMeta.req.constructor.name).toBe('IncomingMessage');
-              expect(loginSuccessMeta.res.constructor.name).toBe('ServerResponse');
-              expect(loginSuccessMeta.jwt['test-issuer']).toBeDefined();
-            })
-            .then(done)
             .catch(done.fail);
+
+          expect(loginSuccessMeta.user.constructor.name).toBe('NativeAuthenticationAuthorityUser');
+          expect(loginSuccessMeta.sapi.constructor.name).toBe('SakuraApi');
+          expect(loginSuccessMeta.req.constructor.name).toBe('IncomingMessage');
+          expect(loginSuccessMeta.res.constructor.name).toBe('ServerResponse');
+          expect(loginSuccessMeta.jwt['test-issuer']).toBeDefined();
+          expect(loginSuccessMeta.domain).toBe(TEST_DOMAIN);
+
+          done();
         });
 
-        it('onUserLoginSuccess reject 401', (done) => {
-          onLoginSuccessFunc = (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response) => {
-            loginSuccessMeta = {user, jwt, sapi, req, res};
+        it('onUserLoginSuccess reject 401', async (done) => {
+          onLoginSuccessFunc = (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
+            loginSuccessMeta = {user, jwt, sapi, req, res, domain};
             return Promise.reject(401);
           };
 
-          request(sapi.app)
-            .post(testUrl('/auth/native', sapi))
-            .send({
-              email,
-              password
-            })
+          await createTestUser(sapi).catch(done.fail);
+
+          await request(sapi.app)
+            .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
             .expect(200)
-            .then(() => {
-              return request(sapi.app)
-                .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
-                .expect(200);
-            })
-            .then(() => {
-              return request(sapi.app)
-                .post(testUrl('/auth/native/login', sapi))
-                .send({
-                  email,
-                  password
-                })
-                .expect(401);
-            })
-            .then(done)
             .catch(done.fail);
+
+          await request(sapi.app)
+            .post(testUrl('/auth/native/login', sapi))
+            .send({
+              domain: TEST_DOMAIN,
+              email: TEST_EMAIL,
+              password: TEST_PASSWORD
+            })
+            .expect(401)
+            .catch(done.fail);
+
+          done();
         });
 
-        it('onUserLoginSuccess reject 403', (done) => {
-          onLoginSuccessFunc = (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response) => {
-            loginSuccessMeta = {user, jwt, sapi, req, res};
+        it('onUserLoginSuccess reject 403', async (done) => {
+          onLoginSuccessFunc = (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
+            loginSuccessMeta = {user, jwt, sapi, req, res, domain};
             return Promise.reject(403);
           };
 
-          request(sapi.app)
-            .post(testUrl('/auth/native', sapi))
-            .send({
-              email,
-              password
-            })
-            .expect(200)
-            .then(() => {
-              return request(sapi.app)
-                .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
-                .expect(200);
-            })
-            .then(() => {
-              return request(sapi.app)
-                .post(testUrl('/auth/native/login', sapi))
-                .send({
-                  email,
-                  password
-                })
-                .expect(403);
-            })
-            .then(done)
-            .catch(done.fail);
+          await createTestUser(sapi).catch(done.fail);
 
+          await request(sapi.app)
+            .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
+            .expect(200);
+
+          await request(sapi.app)
+            .post(testUrl('/auth/native/login', sapi))
+            .send({
+              domain: TEST_DOMAIN,
+              email: TEST_EMAIL,
+              password: TEST_PASSWORD
+            })
+            .expect(403);
+
+          done();
         });
 
-        it('onUserLoginSuccess reject sends 500 on non-401/403 reject value', (done) => {
-          onLoginSuccessFunc = (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response) => {
-            loginSuccessMeta = {user, jwt, sapi, req, res};
+        it('onUserLoginSuccess reject sends 500 on non-401/403 reject value', async (done) => {
+          onLoginSuccessFunc = (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
+            loginSuccessMeta = {user, jwt, sapi, req, res, domain};
             return Promise.reject(778);
           };
 
-          request(sapi.app)
-            .post(testUrl('/auth/native', sapi))
-            .send({
-              email,
-              password
-            })
+          await createTestUser(sapi).catch(done.fail);
+
+          await request(sapi.app)
+            .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
             .expect(200)
-            .then(() => {
-              return request(sapi.app)
-                .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
-                .expect(200);
-            })
-            .then(() => {
-              return request(sapi.app)
-                .post(testUrl('/auth/native/login', sapi))
-                .send({
-                  email,
-                  password
-                })
-                .expect(500);
-            })
-            .then(done)
             .catch(done.fail);
+
+          await request(sapi.app)
+            .post(testUrl('/auth/native/login', sapi))
+            .send({
+              domain: TEST_DOMAIN,
+              email: TEST_EMAIL,
+              password: TEST_PASSWORD
+            })
+            .expect(500)
+            .catch(done.fail);
+
+          done();
         });
 
         it('onUserLoginSuccess reject sends custom error when ' +
-          'rejected with {statusCode:number, message:string}', (done) => {
-          onLoginSuccessFunc = (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response) => {
-            loginSuccessMeta = {user, jwt, sapi, req, res};
+          'rejected with {statusCode:number, message:string}', async (done) => {
+
+          onLoginSuccessFunc = (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
+            loginSuccessMeta = {user, jwt, sapi, req, res, domain};
             return Promise.reject({statusCode: 777, message: 'test'});
           };
 
-          request(sapi.app)
-            .post(testUrl('/auth/native', sapi))
+          await createTestUser(sapi);
+
+          await request(sapi.app)
+            .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
+            .expect(200);
+
+          await request(sapi.app)
+            .post(testUrl('/auth/native/login', sapi))
             .send({
-              email,
-              password
+              domain: TEST_DOMAIN,
+              email: TEST_EMAIL,
+              password: TEST_PASSWORD
             })
-            .expect(200)
-            .then(() => {
-              return request(sapi.app)
-                .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
-                .expect(200);
-            })
-            .then(() => {
-              return request(sapi.app)
-                .post(testUrl('/auth/native/login', sapi))
-                .send({
-                  email,
-                  password
-                })
-                .expect(777);
-            })
-            .then(done)
-            .catch(done.fail);
+            .expect(777);
+
+          done();
         });
+      });
+    });
+
+    describe('newEmailVerificationKey', () => {
+
+      const endpoint = '/auth/native/confirm';
+      let results = null;
+
+      beforeEach((done) => {
+        sapi = testSapi({
+          models: [],
+          plugins: [{
+            options: {
+              bcryptHashRounds: 1,
+              onResendEmailConfirmation: async (user, key, req, res, domain) => {
+                results = {
+                  domain,
+                  key,
+                  user
+                };
+                const locals = res.locals as IRoutableLocals;
+                locals.send(222, {pass: true});
+              }
+            },
+            plugin: addAuthenticationAuthority
+          }],
+          routables: []
+        });
+
+        sapi
+          .listen({bootMessage: ''})
+          .then(done)
+          .catch(done.fail);
+      });
+
+      it('allows integrator to return whatever if account invalid', async (done) => {
+
+        const result: any = await request(sapi.app)
+          .post(testUrl(endpoint, sapi))
+          .send({
+            domain: TEST_DOMAIN,
+            email: TEST_EMAIL
+          })
+          .expect(222)
+          .catch(done.fail);
+
+        expect(result.body.pass).toBeTruthy();
+        expect(results.domain).toBe(TEST_DOMAIN);
+        expect(results.key).toBe('');
+        expect(results.user).toBeNull();
+
+        done();
+      });
+
+      it('generates key for valid user', async (done) => {
+
+        const user = await createTestUser(sapi).catch(done.fail);
+
+        const result: any = await request(sapi.app)
+          .post(testUrl(endpoint, sapi))
+          .send({
+            domain: TEST_DOMAIN,
+            email: TEST_EMAIL
+          })
+          .expect(222)
+          .catch(done.fail);
+
+        expect(result.body.pass).toBeTruthy();
+        expect(results.domain).toBe(TEST_DOMAIN);
+        expect(results.key.split('.').length).toBe(3);
+        expect(results.user.id.toString()).toBe(user._id.toString());
+
+        done();
+      });
+    });
+
+    describe('resetPassword', () => {
+      it('not implemented', () => {
+        pending('not implemented');
       });
     });
   });
 
   describe('AuthenticationAuthorityApi onInjectCustomToken token customization', () => {
-    let sapi;
     let userCreateMeta = {
       emailVerificationKey: null,
       newUser: null
@@ -412,6 +761,7 @@ describe('addAuthenticationAuthority', () => {
         models: [],
         plugins: [{
           options: {
+            bcryptHashRounds: 1,
             onInjectCustomToken,
             onUserCreated
           },
@@ -422,20 +772,6 @@ describe('addAuthenticationAuthority', () => {
 
       sapi
         .listen({bootMessage: ''})
-        .then(() => {
-          return sapi
-            .dbConnections
-            .getDb('user')
-            .collection(dbs.user.collection)
-            .deleteMany({});
-        })
-        .then(done)
-        .catch(done.fail);
-    });
-
-    afterEach((done) => {
-      sapi
-        .close()
         .then(done)
         .catch(done.fail);
     });
@@ -514,4 +850,48 @@ describe('addAuthenticationAuthority', () => {
     });
   });
 });
-// tslint:enable:no-shadowed-variable
+
+function createTestUser(sapi: SakuraApi, email = TEST_EMAIL, password = TEST_PASSWORD, domain = TEST_DOMAIN): Promise<any> {
+  return request(sapi.app)
+    .post(testUrl('/auth/native', sapi))
+    .send({
+      email,
+      password,
+      domain
+    })
+    .expect(200)
+    .then(() => {
+      return sapi
+        .dbConnections
+        .getDb('user')
+        .collection(dbs.user.collection)
+        .find({})
+        .limit(1)
+        .next();
+    });
+}
+
+function encryptToken(keyContent: { [key: string]: any }, sapi: SakuraApi): Promise<string> {
+  return new Promise((resolve, reject) => {
+    try {
+      const iv = randomBytes(16);
+      let cipher;
+
+      try {
+        cipher = createCipheriv('aes-256-gcm', sapi.config.authentication.jwt.key, iv);
+      } catch (err) {
+        throw new Error(`Invalid JWT private key set in SakuraApi's authorization.jwt.key setting: ${err}`);
+      }
+
+      const emailKeyBuffer = Buffer.concat([
+        cipher.update(JSON.stringify(keyContent), 'utf8'),
+        cipher.final()
+      ]);
+      const emailKeyHMACBuffer = cipher.getAuthTag();
+
+      resolve(`${urlBase64Encode(emailKeyBuffer)}.${urlBase64Encode(emailKeyHMACBuffer)}.${urlBase64Encode(iv)}`);
+    } catch (err) {
+      reject(err);
+    }
+  });
+}

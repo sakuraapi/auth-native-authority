@@ -180,7 +180,7 @@ export interface IAuthenticationAuthorityOptions {
    * to the user notifying them of the password change.
    * @param user
    */
-  onChangePasswordEmailRequest?: (user: any, req?: Request, res?: Response) => Promise<any>;
+  onChangePasswordEmailRequest?: (user: any, req?: Request, res?: Response, domain?: string) => Promise<any>;
 
   onError?: (err: Error) => Promise<any>;
 
@@ -190,7 +190,7 @@ export interface IAuthenticationAuthorityOptions {
    * @param user
    * @param token
    */
-  onForgotPasswordEmailRequest: (user: any, token: string, req?: Request, res?: Response) => Promise<any>;
+  onForgotPasswordEmailRequest: (user: any, token: string, req?: Request, res?: Response, domain?: string) => Promise<any>;
 
   /**
    * Receives the current payload and the current db results from the user lookup. If you implement this, you should
@@ -199,7 +199,7 @@ export interface IAuthenticationAuthorityOptions {
    * @param payload
    * @param dbResult
    */
-  onJWTPayloadInject?: (payload: any, dbResult: any) => Promise<any>;
+  onJWTPayloadInject?: (payload: any, dbResult: any, domain?: string) => Promise<any>;
 
   /**
    * Called when a user has successfully logged in. Do whatever you need to, then either resolve the promise to
@@ -208,14 +208,14 @@ export interface IAuthenticationAuthorityOptions {
    * message:string} to have the plugin send the statusCode and message as the response message.
    * @returns {Promise<void>}
    */
-  onLoginSuccess?: (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response) => Promise<void>;
+  onLoginSuccess?: (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response, domain?: string) => Promise<void>;
 
   /**
    * Called when the user needs the email verification key resent.. note that
    * @param user note: if the requested user doesn't exist, this will be undefined
    * @param emailVerificationKey note: if the requested user doesn't exist, this will be undefined
    */
-  onResendEmailConfirmation: (user: any, emailVerificationKey: string, req?: Request, res?: Response) => Promise<any>;
+  onResendEmailConfirmation: (user: any, emailVerificationKey: string, req?: Request, res?: Response, domain?: string) => Promise<any>;
 
   /**
    * If implemented, allows custom tokens to be included in the token dictionary sent back to an authenticated user
@@ -240,7 +240,7 @@ export interface IAuthenticationAuthorityOptions {
    * claiming.
    * @param newUser an object of the user just created, minus the hashed password field.
    */
-  onUserCreated: (newUser: any, emailVerificationKey: string, req?: Request, res?: Response) => Promise<any>;
+  onUserCreated: (newUser: any, emailVerificationKey: string, req?: Request, res?: Response, domain?: string) => Promise<void>;
 
   /**
    * The same database configuration that you're using for your model that represents the collection of MongoDB documents that
@@ -486,8 +486,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           [fields.passwordStrengthDb]: this.getPasswordStrength(newPassword, user)
         });
 
-        if (options.onChangePasswordEmailRequest && typeof options.onUserCreated === 'function') {
-          await options.onChangePasswordEmailRequest(user, req, res);
+        if (options.onChangePasswordEmailRequest && typeof options.onChangePasswordEmailRequest === 'function') {
+          await options.onChangePasswordEmailRequest(user, req, res, domain);
         }
 
         next();
@@ -569,7 +569,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         const emailVerificationKey = await this.encryptToken({userId: user.id});
 
         if (options.onUserCreated && typeof options.onUserCreated === 'function') {
-          await options.onUserCreated(user.toJson(), emailVerificationKey, req, res);
+          await options.onUserCreated(user.toJson(), emailVerificationKey, req, res, domain);
         }
 
         next();
@@ -598,12 +598,12 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     async emailVerification(req: Request, res: Response, next: NextFunction): Promise<void> {
       const locals = res.locals as IRoutableLocals;
 
-      const tokenParts = req.params.token.split('.');
-      if (tokenParts && tokenParts.length !== 3) {
-        throw 403;
-      }
-
       try {
+        const tokenParts = req.params.token.split('.');
+        if (tokenParts && tokenParts.length !== 3) {
+          throw 403;
+        }
+
         const token = await this.decryptToken(tokenParts);
         const user = await NativeAuthenticationAuthorityUser.getById(token.userId, {[fields.emailVerifiedDb]: 1});
 
@@ -657,36 +657,43 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           // the integrator can use to determine the invalid email body state has occurred. The system
           // will default to next() (200 OK) unless the integrator sets res.locals.send...
           await options
-            .onForgotPasswordEmailRequest(undefined, undefined, req, res)
+            .onForgotPasswordEmailRequest(undefined, undefined, req, res, domain)
             .then(() => {
-              throw new Error('invalid');
+              throw 'invalid';
             });
         }
 
         const user = await  NativeAuthenticationAuthorityUser.getOne(query);
 
-        const token = (user)
-          ? await this
-            .encryptToken({
-              issued: new Date().getTime(),
-              userId: user.id
-            })
-          : null;
+        if (!user) {
+          await options
+            .onForgotPasswordEmailRequest(undefined, undefined, req, res, domain)
+            .then(() => {
+              throw 'invalid';
+            });
+        }
+
+        const token = await this
+          .encryptToken({
+            issued: new Date().getTime(),
+            userId: user.id
+          });
 
         const tokenHash = (token)
           ? this.hashToken(token)
           : null;
 
         await user.save({[fields.passwordResetHashDb]: tokenHash});
-        await options.onForgotPasswordEmailRequest(user, token, req, res);
+        await options.onForgotPasswordEmailRequest(user, token, req, res, domain);
 
         next();
 
       } catch (err) {
+
         if (err === 'invalid') {
           return next();
         }
-        
+
         locals.send(500, {error: 'internal_server_error'});
 
         if (options.onError) {
@@ -774,13 +781,13 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
         // Integrator provided function that injects arbitrary fields into the payload from "other" sources
         if (options.onJWTPayloadInject) {
-          payload = await options.onJWTPayloadInject(payload, dbDoc);
+          payload = await options.onJWTPayloadInject(payload, dbDoc, domain);
         }
 
         const token = await buildJwtToken(payload, userInfo);
 
         if (options.onLoginSuccess) {
-          await options.onLoginSuccess(userInfo, token, sapi, req, res);
+          await options.onLoginSuccess(userInfo, token, sapi, req, res, domain);
         }
 
         locals.send(200, {token});
@@ -963,9 +970,10 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           ? await this.encryptToken({userId: user.id})
           : '';
 
-        await options.onResendEmailConfirmation(user, key, req, res);
+        await options.onResendEmailConfirmation(user, key, req, res, domain);
         next();
       } catch (err) {
+
         locals.send(500, {error: 'internal_server_error'});
 
         if (options.onError) {
