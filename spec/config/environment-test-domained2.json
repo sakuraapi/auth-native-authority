@@ -1,0 +1,9 @@
+{
+  "authentication": {
+    "native": {},
+    "jwt": {
+      "key": "Zz%TaLM0IM^Ub%I8evp&jdo#cqpBcoKa",
+      "issuer": "domained-test-issuer"
+    }
+  }
+}

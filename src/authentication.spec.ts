@@ -469,7 +469,7 @@ describe('addAuthenticationAuthority', () => {
           done();
         });
 
-        it('returns authentications tokens for authenticated user', async (done) => {
+        it('returns authentication tokens for authenticated user', async (done) => {
           await createTestUser(sapi).catch(done.fail);
 
           await request(sapi.app)
@@ -496,7 +496,7 @@ describe('addAuthenticationAuthority', () => {
         });
       });
 
-      describe('onUserLoginSuccess', () => {
+      describe('onUserLoginSuccess hook', () => {
         let loginSuccessMeta = {
           jwt: null,
           req: null,
@@ -667,6 +667,159 @@ describe('addAuthenticationAuthority', () => {
 
           done();
         });
+      });
+
+      describe('domained-audiences configuration', () => {
+
+        const sapiConfig = {
+          // configPath: 'lib/spec/config/environment-test-domained.json',
+          models: [],
+          plugins: [{
+            options: {
+              bcryptHashRounds: 1,
+              onUserCreated
+            },
+            plugin: addAuthenticationAuthority
+          }],
+          routables: []
+        };
+
+        it('returns only domain specific tokens - test 1', async (done) => {
+          sapi = testSapi({configPath: 'lib/spec/config/environment-test-domained.json', ...sapiConfig});
+          await sapi
+            .listen({bootMessage: ''})
+            .catch(done.fail);
+
+          const domain = 'domain1';
+
+          await createTestUser(sapi, TEST_EMAIL, TEST_PASSWORD, domain).catch(done.fail);
+          await request(sapi.app)
+            .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
+            .expect(200)
+            .catch(done.fail);
+
+          const result: any = await request(sapi.app)
+            .post(testUrl('/auth/native/login', sapi))
+            .send({
+              domain: domain,
+              email: TEST_EMAIL,
+              password: TEST_PASSWORD
+            })
+            .expect(200)
+            .catch(done.fail);
+
+          const token = result.body.token;
+
+          expect(token['domained-test-issuer'].split('.').length).toBe(3, 'the issuer should have returned its own token');
+          expect(token['audience1'].split('.').length).toBe(3, 'audience1 should have been included for this domain');
+          expect(token['audience2'].split('.').length).toBe(3, 'audience2 should have been included for this domain');
+          expect(token['audience3'].split('.').length).toBe(3, 'audience3 should have been included for this domain');
+
+          done();
+        });
+
+        it('returns only domain specific tokens - test 2', async (done) => {
+          sapi = testSapi({configPath: 'lib/spec/config/environment-test-domained.json', ...sapiConfig});
+          await sapi
+            .listen({bootMessage: ''})
+            .catch(done.fail);
+
+          const domain = 'domain2';
+
+          await createTestUser(sapi, TEST_EMAIL, TEST_PASSWORD, domain).catch(done.fail);
+          await request(sapi.app)
+            .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
+            .expect(200)
+            .catch(done.fail);
+
+          const result: any = await request(sapi.app)
+            .post(testUrl('/auth/native/login', sapi))
+            .send({
+              domain: domain,
+              email: TEST_EMAIL,
+              password: TEST_PASSWORD
+            })
+            .expect(200)
+            .catch(done.fail);
+
+          const token = result.body.token;
+
+          expect(token['domained-test-issuer'].split('.').length).toBe(3, 'the issuer should have returned its own token');
+          expect(token['audience3'].split('.').length).toBe(3, 'audience3 should have been included for this domain');
+          expect(token['audience1']).toBeUndefined('audience1 should not have been included for this domain');
+          expect(token['audience2']).toBeUndefined('audience2 should not have been included for this domain');
+
+          done();
+        });
+
+        it('returns only issuer token if no domain match', async (done) => {
+          sapi = testSapi({configPath: 'lib/spec/config/environment-test-domained.json', ...sapiConfig});
+          await sapi
+            .listen({bootMessage: ''})
+            .catch(done.fail);
+
+          const domain = 'non-existent';
+
+          await createTestUser(sapi, TEST_EMAIL, TEST_PASSWORD, domain).catch(done.fail);
+          await request(sapi.app)
+            .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
+            .expect(200)
+            .catch(done.fail);
+
+          const result: any = await request(sapi.app)
+            .post(testUrl('/auth/native/login', sapi))
+            .send({
+              domain: domain,
+              email: TEST_EMAIL,
+              password: TEST_PASSWORD
+            })
+            .expect(200)
+            .catch(done.fail);
+
+          const token = result.body.token;
+
+          expect(token['domained-test-issuer'].split('.').length).toBe(3, 'the issuer should have returned its own token');
+          expect(token['audience3']).toBeUndefined('audience3 should not have been included for this domain');
+          expect(token['audience1']).toBeUndefined('audience1 should not have been included for this domain');
+          expect(token['audience2']).toBeUndefined('audience2 should not have been included for this domain');
+
+          done();
+        });
+
+        it('only returns issuer if both audiences and domainedAudiences are not defined', async (done) => {
+          sapi = testSapi({configPath: 'lib/spec/config/environment-test-domained2.json', ...sapiConfig});
+          await sapi
+            .listen({bootMessage: ''})
+            .catch(done.fail);
+
+          const domain = 'domain2';
+
+          await createTestUser(sapi, TEST_EMAIL, TEST_PASSWORD, domain).catch(done.fail);
+          await request(sapi.app)
+            .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
+            .expect(200)
+            .catch(done.fail);
+
+          const result: any = await request(sapi.app)
+            .post(testUrl('/auth/native/login', sapi))
+            .send({
+              domain: domain,
+              email: TEST_EMAIL,
+              password: TEST_PASSWORD
+            })
+            .expect(200)
+            .catch(done.fail);
+
+          const token = result.body.token;
+
+          expect(token['domained-test-issuer'].split('.').length).toBe(3, 'the issuer should have returned its own token');
+          expect(token['audience1']).toBeUndefined('audience1 should not have been included for this domain');
+          expect(token['audience2']).toBeUndefined('audience2 should not have been included for this domain');
+          expect(token['audience3']).toBeUndefined('audience3 should not have been included for this domain');
+
+          done();
+        });
+
       });
     });
 

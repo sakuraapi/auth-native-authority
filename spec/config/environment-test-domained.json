@@ -1,0 +1,19 @@
+{
+  "authentication": {
+    "native": {},
+    "jwt": {
+      "key": "Zz%TaLM0IM^Ub%I8evp&jdo#cqpBcoKa",
+      "issuer": "domained-test-issuer",
+      "domainedAudiences": {
+        "domain1": {
+          "audience1": "132jwS6xavXHKXFwNe2396GmO!6XIF&1",
+          "audience2": "232jwS6xavXHKXFwNe2396GmO!6XIF&2",
+          "audience3": "332jwS6xavXHKXFwNe2396GmO!6XIF&3"
+        },
+        "domain2": {
+          "audience3": "332jwS6xavXHKXFwNe2396GmO!6XIF&3"
+        }
+      }
+    }
+  }
+}

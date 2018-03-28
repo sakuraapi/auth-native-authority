@@ -178,19 +178,25 @@ export interface IAuthenticationAuthorityOptions {
   /**
    * Called when the user changes his or her password, allowing the integrator to send an email
    * to the user notifying them of the password change.
-   * @param user
+   * @param user the user requesting the password change
+   * @param domain the domain for which the hook is being called
    */
-  onChangePasswordEmailRequest?: (user: any, req?: Request, res?: Response, domain?: string) => Promise<any>;
+  onChangePasswordEmailRequest?: (user: any, req?: Request, res?: Response, domain?: string) => Promise<void>;
 
-  onError?: (err: Error) => Promise<any>;
+  /**
+   * Called when an error is caught - usually used for logging
+   * @param {Error} err
+   */
+  onError?: (err: Error) => Promise<void>;
 
   /**
    * Called when the user requests a "forgot password" email. It will generate a one time use password reset token. Only the
    * last one used is valid and it must be used within the time-to-live.
    * @param user
    * @param token
+   * @param domain the domain for which the hook is being called
    */
-  onForgotPasswordEmailRequest: (user: any, token: string, req?: Request, res?: Response, domain?: string) => Promise<any>;
+  onForgotPasswordEmailRequest: (user: any, token: string, req?: Request, res?: Response, domain?: string) => Promise<void>;
 
   /**
    * Receives the current payload and the current db results from the user lookup. If you implement this, you should
@@ -198,6 +204,8 @@ export interface IAuthenticationAuthorityOptions {
    * allows you to insert additional information in the resulting JWT token from whatever source you deem appropriate.
    * @param payload
    * @param dbResult
+   * @param domain the domain for which the hook is being called
+   * @returns {Promise<any>} contains the payload that will be the JWT payload
    */
   onJWTPayloadInject?: (payload: any, dbResult: any, domain?: string) => Promise<any>;
 
@@ -206,16 +214,20 @@ export interface IAuthenticationAuthorityOptions {
    * continue, or reject the promise with either the number 401 or 403 to send an unauthorized or forbidden
    * response. Any other rejection value will result in a 500. You can also reject with {statusCode:number,
    * message:string} to have the plugin send the statusCode and message as the response message.
-   * @returns {Promise<void>}
+   * @param domain the domain for which the hook is being called
+   * @returns {Promise<void>} Resolve, or reject the promise with either the number 401 or 403 to send an unauthorized
+   * or forbidden response. Any other rejection value will result in a 500.
    */
   onLoginSuccess?: (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response, domain?: string) => Promise<void>;
 
   /**
-   * Called when the user needs the email verification key resent.. note that
+   * Called when the user needs the email verification key resent.
    * @param user note: if the requested user doesn't exist, this will be undefined
+   * @param emailVerificationKey the key you should build into your link back for email confirmation
+   * @param domain the domain for which the hook is being called
    * @param emailVerificationKey note: if the requested user doesn't exist, this will be undefined
    */
-  onResendEmailConfirmation: (user: any, emailVerificationKey: string, req?: Request, res?: Response, domain?: string) => Promise<any>;
+  onResendEmailConfirmation: (user: any, emailVerificationKey: string, req?: Request, res?: Response, domain?: string) => Promise<void>;
 
   /**
    * If implemented, allows custom tokens to be included in the token dictionary sent back to an authenticated user
@@ -228,10 +240,11 @@ export interface IAuthenticationAuthorityOptions {
    * @param {string} expiration The expiration that was used to generate the tokens in the token dictionary
    * @param payload The payload of the tokens generated in the token dictionary
    * @param {string} jwtId The id that was assigned to the tokens in the token dictionary up to this point
+   * @param domain the domain for which the hook is being called
    * @returns {Promise<ICustomTokenResult[]>} A promise that should resolve an array of ICustomTokenResult which will
    * be used to add your custom tokens to the token dictionary returned to the user.
    */
-  onInjectCustomToken?: (token: any, key: string, issuer: string, expiration: string, payload: any, jwtId: string)
+  onInjectCustomToken?: (token: any, key: string, issuer: string, expiration: string, payload: any, jwtId: string, domain?: string)
     => Promise<ICustomTokenResult[]>;
 
   /**
@@ -239,6 +252,8 @@ export interface IAuthenticationAuthorityOptions {
    * an email and send that to the user in order for them to verify that they have access to the email address they're
    * claiming.
    * @param newUser an object of the user just created, minus the hashed password field.
+   * @param emailVerificationKey the key that should be part of the link back to allow user emails to be confirmed
+   * @param domain the domain for which the hook is being called
    */
   onUserCreated: (newUser: any, emailVerificationKey: string, req?: Request, res?: Response, domain?: string) => Promise<void>;
 
@@ -784,7 +799,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           payload = await options.onJWTPayloadInject(payload, dbDoc, domain);
         }
 
-        const token = await buildJwtToken(payload, userInfo);
+        const token = await buildJwtToken(payload, userInfo, domain);
 
         if (options.onLoginSuccess) {
           await options.onLoginSuccess(userInfo, token, sapi, req, res, domain);
@@ -824,7 +839,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
        * @returns {any} An object with each of its properties representing an audience server and each of the values
        * being the JWT token signed for that audience server.
        */
-      async function buildJwtToken(payload: any, userInfo: NativeAuthenticationAuthorityUser): Promise<any> {
+      async function buildJwtToken(payload: any, userInfo: NativeAuthenticationAuthorityUser, domain: string): Promise<any> {
         const key = jwtAuthConfig.key;
         const issuer = jwtAuthConfig.issuer;
         const exp = jwtAuthConfig.exp || '48h';
@@ -856,7 +871,13 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           audiences.push(issuer);
 
           // Audience Tokens
-          const audienceConfig = jwtAuthConfig.audiences;
+          let audienceConfig;
+          if (jwtAuthConfig.domainedAudiences) {
+            audienceConfig = jwtAuthConfig.domainedAudiences[domain];
+          } else if (jwtAuthConfig.audiences) {
+            audienceConfig = jwtAuthConfig.audiences;
+          }
+
           if (audienceConfig) {
             const keys = Object.keys(audienceConfig);
             for (const jwtAudience of keys) {
@@ -882,7 +903,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
           let customTokens: ICustomTokenResult[] = [];
           if (options.onInjectCustomToken) {
-            customTokens = await options.onInjectCustomToken(token, key, issuer, exp, payload, jti);
+            customTokens = await options.onInjectCustomToken(token, key, issuer, exp, payload, jti, domain);
           }
 
           const customTokensForLog = [];
