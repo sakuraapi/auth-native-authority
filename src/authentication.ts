@@ -799,7 +799,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           payload = await options.onJWTPayloadInject(payload, dbDoc, domain);
         }
 
-        const token = await buildJwtToken(payload, userInfo, domain);
+        const token = await buildJwtToken(payload, userInfo);
 
         if (options.onLoginSuccess) {
           await options.onLoginSuccess(userInfo, token, sapi, req, res, domain);
@@ -839,7 +839,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
        * @returns {any} An object with each of its properties representing an audience server and each of the values
        * being the JWT token signed for that audience server.
        */
-      async function buildJwtToken(payload: any, userInfo: NativeAuthenticationAuthorityUser, domain: string): Promise<any> {
+      async function buildJwtToken(payload: any, userInfo: NativeAuthenticationAuthorityUser): Promise<any> {
         const key = jwtAuthConfig.key;
         const issuer = jwtAuthConfig.issuer;
         const exp = jwtAuthConfig.exp || '48h';
@@ -958,7 +958,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
                 : resolve(token);
             });
         });
-      };
+      }
     }
 
     /**

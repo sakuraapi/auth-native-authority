@@ -11,9 +11,10 @@
     ],
     "max-line-length": [
       true,
-      128
+      140
     ],
     "no-implicit-dependencies": false,
+    "no-string-throw": false,
     "quotemark": [
       true,
       "single",

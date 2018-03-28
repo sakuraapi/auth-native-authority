@@ -368,8 +368,8 @@ describe('addAuthenticationAuthority', () => {
         const result: any = await request(sapi.app)
           .put(testUrl(endpoint, sapi))
           .send({
-            email: TEST_EMAIL,
-            domain: TEST_DOMAIN
+            domain: TEST_DOMAIN,
+            email: TEST_EMAIL
           })
           .expect(222)
           .catch(done.fail);
@@ -390,8 +390,8 @@ describe('addAuthenticationAuthority', () => {
         const result: any = await request(sapi.app)
           .put(testUrl(endpoint, sapi))
           .send({
-            email: TEST_EMAIL,
-            domain: TEST_DOMAIN
+            domain: TEST_DOMAIN,
+            email: TEST_EMAIL
           })
           .expect(222)
           .catch(done.fail);
@@ -498,18 +498,18 @@ describe('addAuthenticationAuthority', () => {
 
       describe('onUserLoginSuccess hook', () => {
         let loginSuccessMeta = {
+          domain: null,
           jwt: null,
           req: null,
           res: null,
           sapi: null,
-          user: null,
-          domain: null
+          user: null
         };
 
         let onLoginSuccessFunc;
 
-        function onLoginSuccess(user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response, domain?: string): Promise<void> {
-          return onLoginSuccessFunc(user, jwt, sapi, req, res, domain);
+        function onLoginSuccess(user: any, jwt: any, sApi: SakuraApi, req?: Request, res?: Response, domain?: string): Promise<void> {
+          return onLoginSuccessFunc(user, jwt, sApi, req, res, domain);
         }
 
         beforeEach((done) => {
@@ -534,8 +534,8 @@ describe('addAuthenticationAuthority', () => {
 
         it('onUserLoginSuccess resolve', async (done) => {
 
-          onLoginSuccessFunc = (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
-            loginSuccessMeta = {user, jwt, sapi, req, res, domain};
+          onLoginSuccessFunc = (user: any, jwt: any, sApi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
+            loginSuccessMeta = {user, jwt, sapi: sApi, req, res, domain};
             return Promise.resolve();
           };
 
@@ -567,8 +567,8 @@ describe('addAuthenticationAuthority', () => {
         });
 
         it('onUserLoginSuccess reject 401', async (done) => {
-          onLoginSuccessFunc = (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
-            loginSuccessMeta = {user, jwt, sapi, req, res, domain};
+          onLoginSuccessFunc = (user: any, jwt: any, sApi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
+            loginSuccessMeta = {user, jwt, sapi: sApi, req, res, domain};
             return Promise.reject(401);
           };
 
@@ -593,8 +593,8 @@ describe('addAuthenticationAuthority', () => {
         });
 
         it('onUserLoginSuccess reject 403', async (done) => {
-          onLoginSuccessFunc = (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
-            loginSuccessMeta = {user, jwt, sapi, req, res, domain};
+          onLoginSuccessFunc = (user: any, jwt: any, sApi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
+            loginSuccessMeta = {user, jwt, sapi: sApi, req, res, domain};
             return Promise.reject(403);
           };
 
@@ -617,8 +617,8 @@ describe('addAuthenticationAuthority', () => {
         });
 
         it('onUserLoginSuccess reject sends 500 on non-401/403 reject value', async (done) => {
-          onLoginSuccessFunc = (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
-            loginSuccessMeta = {user, jwt, sapi, req, res, domain};
+          onLoginSuccessFunc = (user: any, jwt: any, sApi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
+            loginSuccessMeta = {user, jwt, sapi: sApi, req, res, domain};
             return Promise.reject(778);
           };
 
@@ -645,8 +645,8 @@ describe('addAuthenticationAuthority', () => {
         it('onUserLoginSuccess reject sends custom error when ' +
           'rejected with {statusCode:number, message:string}', async (done) => {
 
-          onLoginSuccessFunc = (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
-            loginSuccessMeta = {user, jwt, sapi, req, res, domain};
+          onLoginSuccessFunc = (user: any, jwt: any, sApi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
+            loginSuccessMeta = {user, jwt, sapi: sApi, req, res, domain};
             return Promise.reject({statusCode: 777, message: 'test'});
           };
 
@@ -701,7 +701,7 @@ describe('addAuthenticationAuthority', () => {
           const result: any = await request(sapi.app)
             .post(testUrl('/auth/native/login', sapi))
             .send({
-              domain: domain,
+              domain,
               email: TEST_EMAIL,
               password: TEST_PASSWORD
             })
@@ -711,9 +711,9 @@ describe('addAuthenticationAuthority', () => {
           const token = result.body.token;
 
           expect(token['domained-test-issuer'].split('.').length).toBe(3, 'the issuer should have returned its own token');
-          expect(token['audience1'].split('.').length).toBe(3, 'audience1 should have been included for this domain');
-          expect(token['audience2'].split('.').length).toBe(3, 'audience2 should have been included for this domain');
-          expect(token['audience3'].split('.').length).toBe(3, 'audience3 should have been included for this domain');
+          expect(token.audience1.split('.').length).toBe(3, 'audience1 should have been included for this domain');
+          expect(token.audience2.split('.').length).toBe(3, 'audience2 should have been included for this domain');
+          expect(token.audience3.split('.').length).toBe(3, 'audience3 should have been included for this domain');
 
           done();
         });
@@ -735,7 +735,7 @@ describe('addAuthenticationAuthority', () => {
           const result: any = await request(sapi.app)
             .post(testUrl('/auth/native/login', sapi))
             .send({
-              domain: domain,
+              domain,
               email: TEST_EMAIL,
               password: TEST_PASSWORD
             })
@@ -745,9 +745,9 @@ describe('addAuthenticationAuthority', () => {
           const token = result.body.token;
 
           expect(token['domained-test-issuer'].split('.').length).toBe(3, 'the issuer should have returned its own token');
-          expect(token['audience3'].split('.').length).toBe(3, 'audience3 should have been included for this domain');
-          expect(token['audience1']).toBeUndefined('audience1 should not have been included for this domain');
-          expect(token['audience2']).toBeUndefined('audience2 should not have been included for this domain');
+          expect(token.audience3.split('.').length).toBe(3, 'audience3 should have been included for this domain');
+          expect(token.audience1).toBeUndefined('audience1 should not have been included for this domain');
+          expect(token.audience2).toBeUndefined('audience2 should not have been included for this domain');
 
           done();
         });
@@ -769,7 +769,7 @@ describe('addAuthenticationAuthority', () => {
           const result: any = await request(sapi.app)
             .post(testUrl('/auth/native/login', sapi))
             .send({
-              domain: domain,
+              domain,
               email: TEST_EMAIL,
               password: TEST_PASSWORD
             })
@@ -779,9 +779,9 @@ describe('addAuthenticationAuthority', () => {
           const token = result.body.token;
 
           expect(token['domained-test-issuer'].split('.').length).toBe(3, 'the issuer should have returned its own token');
-          expect(token['audience3']).toBeUndefined('audience3 should not have been included for this domain');
-          expect(token['audience1']).toBeUndefined('audience1 should not have been included for this domain');
-          expect(token['audience2']).toBeUndefined('audience2 should not have been included for this domain');
+          expect(token.audience3).toBeUndefined('audience3 should not have been included for this domain');
+          expect(token.audience1).toBeUndefined('audience1 should not have been included for this domain');
+          expect(token.audience2).toBeUndefined('audience2 should not have been included for this domain');
 
           done();
         });
@@ -803,7 +803,7 @@ describe('addAuthenticationAuthority', () => {
           const result: any = await request(sapi.app)
             .post(testUrl('/auth/native/login', sapi))
             .send({
-              domain: domain,
+              domain,
               email: TEST_EMAIL,
               password: TEST_PASSWORD
             })
@@ -813,9 +813,9 @@ describe('addAuthenticationAuthority', () => {
           const token = result.body.token;
 
           expect(token['domained-test-issuer'].split('.').length).toBe(3, 'the issuer should have returned its own token');
-          expect(token['audience1']).toBeUndefined('audience1 should not have been included for this domain');
-          expect(token['audience2']).toBeUndefined('audience2 should not have been included for this domain');
-          expect(token['audience3']).toBeUndefined('audience3 should not have been included for this domain');
+          expect(token.audience1).toBeUndefined('audience1 should not have been included for this domain');
+          expect(token.audience2).toBeUndefined('audience2 should not have been included for this domain');
+          expect(token.audience3).toBeUndefined('audience3 should not have been included for this domain');
 
           done();
         });
@@ -973,8 +973,8 @@ describe('addAuthenticationAuthority', () => {
         await request(sapi.app)
           .put(testUrl(`/auth/native/forgot-password`, sapi))
           .send({
-            email: TEST_EMAIL,
-            domain: TEST_DOMAIN
+            domain: TEST_DOMAIN,
+            email: TEST_EMAIL
           })
           .expect(200)
           .catch(done.fail);
@@ -1005,8 +1005,8 @@ describe('addAuthenticationAuthority', () => {
         await request(sapi.app)
           .put(testUrl(`/auth/native/forgot-password`, sapi))
           .send({
-            email: TEST_EMAIL,
-            domain: TEST_DOMAIN
+            domain: TEST_DOMAIN,
+            email: TEST_EMAIL
           })
           .expect(200)
           .catch(done.fail);
@@ -1150,9 +1150,9 @@ function createTestUser(sapi: SakuraApi, email = TEST_EMAIL, password = TEST_PAS
   return request(sapi.app)
     .post(testUrl('/auth/native', sapi))
     .send({
+      domain,
       email,
-      password,
-      domain
+      password
     })
     .expect(200)
     .then(() => {
