@@ -984,7 +984,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     }
 
     /**
-     * resets a forgotten password and sets email verified to true... a user should only be able to peform this task
+     * resets a forgotten password and sets email verified to true... a user should only be able to perform this task
      * if he/she received a token at their email that let to a portal that send that token back into this
      * endpoint... so, if the user's email verified was false, there's no reason to further pester them to verify their
      * email.
@@ -1009,6 +1009,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         }
 
         const token = await this.decryptToken(tokenParts);
+
         const elapsedTime = new Date().getTime() - token.issued;
         if (elapsedTime > 24 * 3600000) { // 24 * 1 hour
           throw 403;

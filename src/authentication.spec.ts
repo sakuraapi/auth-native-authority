@@ -34,7 +34,7 @@ describe('addAuthenticationAuthority', () => {
     if (!sapi) {
       return done();
     }
-    
+
     await sapi
       .dbConnections
       .getDb('user')
@@ -744,9 +744,151 @@ describe('addAuthenticationAuthority', () => {
     });
 
     describe('resetPassword', () => {
-      it('not implemented', () => {
-        pending('not implemented');
+      const endpoint = '/auth/native/reset-password';
+      let token = null;
+
+      beforeEach((done) => {
+        sapi = testSapi({
+          models: [],
+          plugins: [{
+            options: {
+              bcryptHashRounds: 1,
+              onForgotPasswordEmailRequest: async (user, tkn) => {
+                token = tkn;
+              }
+            },
+            plugin: addAuthenticationAuthority
+          }],
+          routables: []
+        });
+
+        sapi
+          .listen({bootMessage: ''})
+          .then(done)
+          .catch(done.fail);
       });
+
+      afterEach(() => token = null);
+
+      it('returns 400 if password field is missing', async (done) => {
+        const tkn = '123';
+
+        const result: any = await request(sapi.app)
+          .put(testUrl(`${endpoint}/${tkn}`, sapi))
+          .expect(400)
+          .catch(done.fail);
+
+        expect(result.body.error).toBe('bad_request');
+        done();
+      });
+
+      it('returns 403 if token is invalid', async (done) => {
+        const tkn = '123';
+
+        const result: any = await request(sapi.app)
+          .put(testUrl(`${endpoint}/${tkn}`, sapi))
+          .expect(403)
+          .send({
+            password: TEST_PASSWORD
+          })
+          .catch(done.fail);
+
+        expect(result.body.error).toBe('invalid_token');
+        done();
+      });
+
+      it('returns 403 if token is expired', async (done) => {
+        const tkn = await encryptToken({issued: 0}, sapi);
+
+        const result: any = await request(sapi.app)
+          .put(testUrl(`${endpoint}/${tkn}`, sapi))
+          .expect(403)
+          .send({
+            password: TEST_PASSWORD
+          })
+          .catch(done.fail);
+
+        expect(result.body.error).toBe('invalid_token');
+        done();
+      });
+
+      it('returns 403 if user record does not having matching token hash', async (done) => {
+
+        const user = await createTestUser(sapi);
+
+        // get password reset token
+        await request(sapi.app)
+          .put(testUrl(`/auth/native/forgot-password`, sapi))
+          .send({
+            email: TEST_EMAIL,
+            domain: TEST_DOMAIN
+          })
+          .expect(200)
+          .catch(done.fail);
+
+        await sapi
+          .dbConnections
+          .getDb('user')
+          .collection(dbs.user.collection)
+          .updateOne({_id: user._id}, {$unset: {pwResetId: ''}});
+
+        const result: any = await request(sapi.app)
+          .put(testUrl(`${endpoint}/${token}`, sapi))
+          .send({
+            password: TEST_PASSWORD
+          })
+          .expect(403)
+          .catch(done.fail);
+
+        expect(result.body.error).toBe('invalid_token');
+        done();
+      });
+
+      it('updates the user password', async (done) => {
+
+        const user = await createTestUser(sapi);
+
+        // get password reset token
+        await request(sapi.app)
+          .put(testUrl(`/auth/native/forgot-password`, sapi))
+          .send({
+            email: TEST_EMAIL,
+            domain: TEST_DOMAIN
+          })
+          .expect(200)
+          .catch(done.fail);
+
+        const result: any = await request(sapi.app)
+          .put(testUrl(`${endpoint}/${token}`, sapi))
+          .send({
+            password: TEST_PASSWORD + 'new'
+          })
+          .expect(200)
+          .catch(done.fail);
+
+        await request(sapi.app)
+          .post(testUrl('/auth/native/login', sapi))
+          .send({
+            domain: TEST_DOMAIN,
+            email: TEST_EMAIL,
+            password: TEST_PASSWORD
+          })
+          .expect(401)
+          .catch(done.fail);
+
+        await request(sapi.app)
+          .post(testUrl('/auth/native/login', sapi))
+          .send({
+            domain: TEST_DOMAIN,
+            email: TEST_EMAIL,
+            password: TEST_PASSWORD + 'new'
+          })
+          .expect(200)
+          .catch(done.fail);
+
+        done();
+      });
+
     });
   });
 
