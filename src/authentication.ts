@@ -10,36 +10,36 @@ import {
   SakuraApiPluginResult,
   SapiModelMixin,
   SapiRoutableMixin
-}                   from '@sakuraapi/core';
+}                      from '@sakuraapi/core';
 import {
   compare,
   hash as bcryptHash
-}                   from 'bcrypt';
+}                      from 'bcrypt';
 import {
   createCipheriv,
   createDecipheriv,
   createHash,
   createHmac,
   randomBytes
-}                   from 'crypto';
+}                      from 'crypto';
 import {
   Handler,
   NextFunction,
   Request,
   Response
-}                   from 'express';
+}                      from 'express';
 import {
   decode as decodeToken,
   sign as signToken
-}                   from 'jsonwebtoken';
-import {ObjectID}   from 'mongodb';
+}                      from 'jsonwebtoken';
+import {ObjectID}      from 'mongodb';
 import {
   decode as urlBase64Decode,
   encode as urlBase64Encode,
   validate as urlBase64Validate
-}                   from 'urlsafe-base64';
-import {v4 as uuid} from 'uuid';
-import pwStrength = require('zxcvbn');
+}                      from 'urlsafe-base64';
+import {v4 as uuid}    from 'uuid';
+import * as pwStrength from 'zxcvbn';
 
 const IV_LENGTH = 16;
 
@@ -178,19 +178,25 @@ export interface IAuthenticationAuthorityOptions {
   /**
    * Called when the user changes his or her password, allowing the integrator to send an email
    * to the user notifying them of the password change.
-   * @param user
+   * @param user the user requesting the password change
+   * @param domain the domain for which the hook is being called
    */
-  onChangePasswordEmailRequest?: (user: any, req?: Request, res?: Response) => Promise<any>;
+  onChangePasswordEmailRequest?: (user: any, req?: Request, res?: Response, domain?: string) => Promise<void>;
 
-  onError?: (err: Error) => Promise<any>;
+  /**
+   * Called when an error is caught - usually used for logging
+   * @param {Error} err
+   */
+  onError?: (err: Error) => Promise<void>;
 
   /**
    * Called when the user requests a "forgot password" email. It will generate a one time use password reset token. Only the
    * last one used is valid and it must be used within the time-to-live.
    * @param user
    * @param token
+   * @param domain the domain for which the hook is being called
    */
-  onForgotPasswordEmailRequest: (user: any, token: string, req?: Request, res?: Response) => Promise<any>;
+  onForgotPasswordEmailRequest: (user: any, token: string, req?: Request, res?: Response, domain?: string) => Promise<void>;
 
   /**
    * Receives the current payload and the current db results from the user lookup. If you implement this, you should
@@ -198,24 +204,30 @@ export interface IAuthenticationAuthorityOptions {
    * allows you to insert additional information in the resulting JWT token from whatever source you deem appropriate.
    * @param payload
    * @param dbResult
+   * @param domain the domain for which the hook is being called
+   * @returns {Promise<any>} contains the payload that will be the JWT payload
    */
-  onJWTPayloadInject?: (payload: any, dbResult: any) => Promise<any>;
+  onJWTPayloadInject?: (payload: any, dbResult: any, domain?: string) => Promise<any>;
 
   /**
    * Called when a user has successfully logged in. Do whatever you need to, then either resolve the promise to
    * continue, or reject the promise with either the number 401 or 403 to send an unauthorized or forbidden
    * response. Any other rejection value will result in a 500. You can also reject with {statusCode:number,
    * message:string} to have the plugin send the statusCode and message as the response message.
-   * @returns {Promise<void>}
+   * @param domain the domain for which the hook is being called
+   * @returns {Promise<void>} Resolve, or reject the promise with either the number 401 or 403 to send an unauthorized
+   * or forbidden response. Any other rejection value will result in a 500.
    */
-  onLoginSuccess?: (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response) => Promise<void>;
+  onLoginSuccess?: (user: any, jwt: any, sapi: SakuraApi, req?: Request, res?: Response, domain?: string) => Promise<void>;
 
   /**
-   * Called when the user needs the email verification key resent.. note that
+   * Called when the user needs the email verification key resent.
    * @param user note: if the requested user doesn't exist, this will be undefined
+   * @param emailVerificationKey the key you should build into your link back for email confirmation
+   * @param domain the domain for which the hook is being called
    * @param emailVerificationKey note: if the requested user doesn't exist, this will be undefined
    */
-  onResendEmailConfirmation: (user: any, emailVerificationKey: string, req?: Request, res?: Response) => Promise<any>;
+  onResendEmailConfirmation: (user: any, emailVerificationKey: string, req?: Request, res?: Response, domain?: string) => Promise<void>;
 
   /**
    * If implemented, allows custom tokens to be included in the token dictionary sent back to an authenticated user
@@ -228,10 +240,11 @@ export interface IAuthenticationAuthorityOptions {
    * @param {string} expiration The expiration that was used to generate the tokens in the token dictionary
    * @param payload The payload of the tokens generated in the token dictionary
    * @param {string} jwtId The id that was assigned to the tokens in the token dictionary up to this point
+   * @param domain the domain for which the hook is being called
    * @returns {Promise<ICustomTokenResult[]>} A promise that should resolve an array of ICustomTokenResult which will
    * be used to add your custom tokens to the token dictionary returned to the user.
    */
-  onInjectCustomToken?: (token: any, key: string, issuer: string, expiration: string, payload: any, jwtId: string)
+  onInjectCustomToken?: (token: any, key: string, issuer: string, expiration: string, payload: any, jwtId: string, domain?: string)
     => Promise<ICustomTokenResult[]>;
 
   /**
@@ -239,8 +252,10 @@ export interface IAuthenticationAuthorityOptions {
    * an email and send that to the user in order for them to verify that they have access to the email address they're
    * claiming.
    * @param newUser an object of the user just created, minus the hashed password field.
+   * @param emailVerificationKey the key that should be part of the link back to allow user emails to be confirmed
+   * @param domain the domain for which the hook is being called
    */
-  onUserCreated: (newUser: any, emailVerificationKey: string, req?: Request, res?: Response) => Promise<any>;
+  onUserCreated: (newUser: any, emailVerificationKey: string, req?: Request, res?: Response, domain?: string) => Promise<void>;
 
   /**
    * The same database configuration that you're using for your model that represents the collection of MongoDB documents that
@@ -291,8 +306,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       `'userDbConfig' configuration in 'IAuthenticationAuthorityOptions. Provided options ${JSON.stringify(options)}`);
   }
 
-  // note, though sapi.config.native is overridden by the options parameter, and the dbConfig must always come from the
-  // options parameter.
+  // note: dbConfig for models below will always come from options, not from JSON config
   const nativeAuthConfig = ((sapi.config.authentication || {} as any).native || null) as IAuthenticationAuthorityOptions;
   const jwtAuthConfig = (sapi.config.authentication || {} as any).jwt || null;
 
@@ -448,7 +462,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       method: 'put',
       path: endpoints.changePassword || 'auth/native/change-password'
     })
-    changePassword(req: Request, res: Response, next: NextFunction) {
+    async changePassword(req: Request, res: Response, next: NextFunction): Promise<void> {
       const locals = res.locals as IRoutableLocals;
 
       const email = `${locals.reqBody.email}`;
@@ -456,59 +470,52 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       const newPassword = `${locals.reqBody.newPassword}`;
       const domain = `${locals.reqBody.domain || options.defaultDomain || nativeAuthConfig.defaultDomain}`;
 
-      let user;
-      Promise
-        .resolve()
-        .then(() => {
-          if (!locals.reqBody.email || !locals.reqBody.currentPassword || !locals.reqBody.newPassword) {
-            locals.send(400, {error: 'invalid_body'});
-            throw 400;
-          }
+      try {
+        if (!locals.reqBody.email || !locals.reqBody.currentPassword || !locals.reqBody.newPassword) {
+          locals.send(400, {error: 'invalid_body'});
+          throw 400;
+        }
 
-          const query = {
-            [fields.emailDb]: email,
-            [fields.domainDb]: domain
-          };
+        const query = {
+          [fields.emailDb]: email,
+          [fields.domainDb]: domain
+        };
 
-          return NativeAuthenticationAuthorityUser.getOne(query);
-        })
-        .then((usr) => {
-          user = usr;
-          if (!user) {
-            locals.send(401, {error: 'unauthorized'});
-            throw 401;
-          }
-        })
-        .then(() => compare(currentPassword, user.password))
-        .then((pwMatch) => {
-          if (!pwMatch) {
-            locals.send(401, {error: 'unauthorized'});
-            throw 401;
-          }
-        })
-        .then(() => bcryptHash(newPassword, bcryptHashRounds))
-        .then((pwHash) => {
-          return user.save({
-            [fields.passwordDb]: pwHash,
-            [fields.passwordSetDateDb]: new Date(),
-            [fields.passwordStrengthDb]: this.getPasswordStrength(newPassword, user)
-          });
-        })
-        .then(() => (options.onChangePasswordEmailRequest)
-          ? options.onChangePasswordEmailRequest(user, req, res)
-          : Promise.resolve())
-        .then(() => next())
-        .catch(async (err) => {
-          if (err === 400 || err === 401) {
-            return next();
-          }
+        const user = await NativeAuthenticationAuthorityUser.getOne(query);
+        if (!user) {
+          locals.send(401, {error: 'unauthorized'});
+          throw 401;
+        }
 
-          if (options.onError) {
-            await options.onError(err);
-          }
+        const pwMatch = await compare(currentPassword, user.password);
+        if (!pwMatch) {
+          locals.send(401, {error: 'unauthorized'});
+          throw 401;
+        }
 
-          next();
+        const pwHash = await bcryptHash(newPassword, bcryptHashRounds);
+
+        await user.save({
+          [fields.passwordDb]: pwHash,
+          [fields.passwordSetDateDb]: new Date(),
+          [fields.passwordStrengthDb]: this.getPasswordStrength(newPassword, user)
         });
+
+        if (options.onChangePasswordEmailRequest && typeof options.onChangePasswordEmailRequest === 'function') {
+          await options.onChangePasswordEmailRequest(user, req, res, domain);
+        }
+
+        next();
+      } catch (err) {
+        if (err === 400 || err === 401) {
+          return next();
+        }
+
+        if (options.onError) {
+          await options.onError(err);
+        }
+        next();
+      }
     }
 
     /**
@@ -518,7 +525,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       before: (options.onBeforeUserCreate as any),
       method: 'post', path: endpoints.create || 'auth/native'
     })
-    create(req: Request, res: Response, next: NextFunction) {
+    async create(req: Request, res: Response, next: NextFunction): Promise<void> {
       const locals = res.locals as IRoutableLocals;
       const customFields = (options.create || {} as any).acceptFields
         || (((sapi.config.authentication || {} as any).native || {} as any).create || {} as any).acceptFields;
@@ -537,59 +544,63 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         return next();
       }
 
-      let user;
-      NativeAuthenticationAuthorityUser
-        .getOne({
-          [fields.emailDb]: email,
-          [fields.domainDb]: domain
-        })
-        .then((existingUser) => {
-          // Make sure the user doesn't already exist
-          if (existingUser) {
-            locals.send(409, {error: 'email_in_use'});
-            throw 409;
-          }
-        })
-        .then(() => bcryptHash(password, bcryptHashRounds))
-        .then((pwHash) => {
-          user = new NativeAuthenticationAuthorityUser();
+      try {
 
-          user.email = email;
-          user.password = pwHash;
-          user.domain = domain;
-          user.emailVerified = false;
-          user.passwordSet = new Date();
+        const existingUser = await NativeAuthenticationAuthorityUser
+          .getOne({
+            [fields.emailDb]: email,
+            [fields.domainDb]: domain
+          });
 
-          if (customFields) {
-            for (const jsonField of Object.keys(customFields)) {
-              if (locals.reqBody[jsonField] === undefined) {
-                continue;
-              }
-              user[customFields[jsonField]] = locals.reqBody[jsonField];
+        // Make sure the user doesn't already exist
+        if (existingUser) {
+          locals.send(409, {error: 'email_in_use'});
+          throw 409;
+        }
+
+        const pwHash = await bcryptHash(password, bcryptHashRounds);
+
+        const user = new NativeAuthenticationAuthorityUser();
+
+        user.email = email;
+        user.password = pwHash;
+        user.domain = domain;
+        user.emailVerified = false;
+        user.passwordSet = new Date();
+
+        if (customFields) {
+          const keys = Object.keys(customFields);
+          for (const jsonField of keys) {
+            if (locals.reqBody[jsonField] === undefined) {
+              continue;
             }
+            user[customFields[jsonField]] = locals.reqBody[jsonField];
           }
+        }
 
-          user.passwordStrength = this.getPasswordStrength(password, user);
-        })
-        .then(() => user.create())
-        .then(() => this.encryptToken({userId: user.id}))
-        .then((emailVerificationKey) =>
-          (options.onUserCreated && typeof options.onUserCreated === 'function')
-            ? options.onUserCreated(user.toJson(), emailVerificationKey, req, res)
-            : Promise.resolve())
-        .then(() => next())
-        .catch(async (err) => {
-          if (err === 409) {
-            return next();
-          }
-          locals.send(500, {error: 'internal_server_error'});
+        user.passwordStrength = this.getPasswordStrength(password, user);
 
-          if (options.onError) {
-            await options.onError(err);
-          }
+        await user.create();
+        const emailVerificationKey = await this.encryptToken({userId: user.id});
 
-          next();
-        });
+        if (options.onUserCreated && typeof options.onUserCreated === 'function') {
+          await options.onUserCreated(user.toJson(), emailVerificationKey, req, res, domain);
+        }
+
+        next();
+      } catch (err) {
+        if (err === 409) {
+          return next();
+        }
+
+        locals.send(500, {error: 'internal_server_error'});
+
+        if (options.onError) {
+          await options.onError(err);
+        }
+
+        next();
+      }
     }
 
     /**
@@ -599,43 +610,41 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       method: 'get',
       path: endpoints.emailVerification || 'auth/native/confirm/:token'
     })
-    emailVerification(req: Request, res: Response, next: NextFunction) {
+    async emailVerification(req: Request, res: Response, next: NextFunction): Promise<void> {
       const locals = res.locals as IRoutableLocals;
 
-      Promise
-        .resolve()
-        .then(() => {
-          const tokenParts = req.params.token.split('.');
-          if (tokenParts && tokenParts.length !== 3) {
-            throw 403;
-          }
-          return tokenParts;
-        })
-        .then(this.decryptToken)
-        .then((token) => NativeAuthenticationAuthorityUser.getById(token.userId, {[fields.emailVerifiedDb]: 1}))
-        .then((user: any) => {
-          if (!user) {
-            throw 403;
-          }
+      try {
+        const tokenParts = req.params.token.split('.');
+        if (tokenParts && tokenParts.length !== 3) {
+          throw 403;
+        }
 
-          if (!user.emailVerified) {
-            return user.save({[fields.emailVerifiedDb]: true});
-          }
-        })
-        .then(() => next())
-        .catch(async (err) => {
-          if (err === 403) {
-            locals.send(403, {error: 'invalid_token'});
-            return next();
-          }
-          locals.send(500, {error: 'internal_server_error'});
+        const token = await this.decryptToken(tokenParts);
+        const user = await NativeAuthenticationAuthorityUser.getById(token.userId, {[fields.emailVerifiedDb]: 1});
 
-          if (options.onError) {
-            await options.onError(err);
-          }
+        if (!user) {
+          throw 403;
+        }
 
+        if (!user.emailVerified) {
+          await user.save({[fields.emailVerifiedDb]: true});
+        }
+
+        next();
+      } catch (err) {
+        if (err === 403) {
+          locals.send(403, {error: 'invalid_token'});
           return next();
-        });
+        }
+
+        locals.send(500, {error: 'internal_server_error'});
+
+        if (options.onError) {
+          await options.onError(err);
+        }
+
+        next();
+      }
     }
 
     /**
@@ -645,7 +654,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       method: 'put',
       path: endpoints.forgotPassword || 'auth/native/forgot-password'
     })
-    forgotPassword(req: Request, res: Response, next: NextFunction) {
+    async forgotPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
       const locals = res.locals as IRoutableLocals;
 
       const email = `${locals.reqBody.email}`;
@@ -656,52 +665,58 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         [fields.domainJson]: domain
       };
 
-      let user;
-      let token;
-      let tokenHash;
-      Promise
-        .resolve()
-        .then(() => {
-          if (!locals.reqBody.email) {
-            // let the integrator decide what to do in this circumstance
-            return options
-              .onForgotPasswordEmailRequest(undefined, undefined, req, res)
-              .then(() => {
-                throw new Error('invalid');
-              });
-          }
-        })
-        .then(() => NativeAuthenticationAuthorityUser.getOne(query))
-        .then((usr) => user = usr)
-        .then(() => (user)
-          ? this.encryptToken({
+      try {
+
+        if (!locals.reqBody.email) {
+          // let the integrator decide what to do in this circumstance. `user` and `token` are undefined, which
+          // the integrator can use to determine the invalid email body state has occurred. The system
+          // will default to next() (200 OK) unless the integrator sets res.locals.send...
+          await options
+            .onForgotPasswordEmailRequest(undefined, undefined, req, res, domain)
+            .then(() => {
+              throw 'invalid';
+            });
+        }
+
+        const user = await  NativeAuthenticationAuthorityUser.getOne(query);
+
+        if (!user) {
+          await options
+            .onForgotPasswordEmailRequest(undefined, undefined, req, res, domain)
+            .then(() => {
+              throw 'invalid';
+            });
+        }
+
+        const token = await this
+          .encryptToken({
             issued: new Date().getTime(),
             userId: user.id
-          })
-          : null)
-        .then((tkn) => {
-          if (!tkn) {
-            return;
-          }
-          token = tkn;
-          tokenHash = this.hashToken(token);
+          });
 
-          return user.save({[fields.passwordResetHashDb]: tokenHash});
-        })
-        .then(() => options.onForgotPasswordEmailRequest(user, token, req, res))
-        .then(() => next())
-        .catch(async (err) => {
-          if (err === 'invalid') {
-            return next();
-          }
-          locals.send(500, {error: 'internal_server_error'});
+        const tokenHash = (token)
+          ? this.hashToken(token)
+          : null;
 
-          if (options.onError) {
-            await options.onError(err);
-          }
+        await user.save({[fields.passwordResetHashDb]: tokenHash});
+        await options.onForgotPasswordEmailRequest(user, token, req, res, domain);
 
-          next();
-        });
+        next();
+
+      } catch (err) {
+
+        if (err === 'invalid') {
+          return next();
+        }
+
+        locals.send(500, {error: 'internal_server_error'});
+
+        if (options.onError) {
+          await options.onError(err);
+        }
+
+        next();
+      }
     }
 
     /**
@@ -711,7 +726,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       method: 'post',
       path: endpoints.login || 'auth/native/login'
     })
-    login(req: Request, res: Response, next: NextFunction) {
+    async login(req: Request, res: Response, next: NextFunction): Promise<void> {
 
       const locals = res.locals as IRoutableLocals;
 
@@ -728,104 +743,91 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         locals.send(400, {error: 'password is invalid, check body'});
         return next();
       }
+      try {
 
-      const query = {
-        [fields.emailDb]: email,
-        [fields.domainDb]: domain
-      };
+        const query = {
+          [fields.emailDb]: email,
+          [fields.domainDb]: domain
+        };
 
-      let dbDoc;
-      let userInfo;
+        const dbDoc = await NativeAuthenticationAuthorityUser
+          .getCursor(query)
+          .limit(1)
+          .next();
 
-      NativeAuthenticationAuthorityUser
-        .getCursor(query)
-        .limit(1)
-        .next()
-        .then((result) => {
-          dbDoc = result;
-          userInfo = NativeAuthenticationAuthorityUser.fromDb(dbDoc);
+        const userInfo = await NativeAuthenticationAuthorityUser.fromDb(dbDoc);
 
-          if (!userInfo) {
-            locals.send(401, {error: 'login_failed'});
-            throw 401;
-          }
-        })
-        .then(() => compare(password, userInfo.password))
-        .then((pwMatch) => {
-          if (!pwMatch) {
-            locals.send(401, {error: 'login_failed'});
-            throw 401;
-          }
+        if (!userInfo) {
+          locals.send(401, {error: 'login_failed'});
+          throw 401;
+        }
 
-          if (!userInfo.emailVerified) {
-            locals.send(403, {error: 'email_validation_required'});
-            throw 403;
-          }
+        const pwMatch = await compare(password, userInfo.password);
 
-          const payload = {
-            [fields.emailJson]: email,
-            [fields.domainJson]: domain
-          };
+        if (!pwMatch) {
+          locals.send(401, {error: 'login_failed'});
+          throw 401;
+        }
 
-          // Allows the inclusion of other fields from the User collection
-          const fieldInclusion = ((sapi.config.authentication || {} as any).jwt || {} as any).fields;
-          if (fieldInclusion) {
-            for (const dbbField of Object.keys(fieldInclusion)) {
-              const payloadField = fieldInclusion[dbbField];
+        if (!userInfo.emailVerified) {
+          locals.send(403, {error: 'email_validation_required'});
+          throw 403;
+        }
 
-              if (typeof payloadField !== 'string') {
-                return Promise
-                  .reject(new Error('unable to proceed, server misconfiguration. authentication.jwt.fields must be' +
-                    `a key value pair of strings. key '${dbbField}' has a value typeof '${typeof payloadField}'`));
-              }
-              payload[payloadField] = dbDoc[dbbField];
+        let payload = {
+          [fields.emailJson]: email,
+          [fields.domainJson]: domain
+        };
+
+        // Allows the inclusion of other fields from the User collection
+        const fieldInclusion = ((sapi.config.authentication || {} as any).jwt || {} as any).fields;
+        if (fieldInclusion) {
+          for (const dbbField of Object.keys(fieldInclusion)) {
+            const payloadField = fieldInclusion[dbbField];
+
+            if (typeof payloadField !== 'string') {
+              return Promise
+                .reject(new Error('unable to proceed, server misconfiguration. authentication.jwt.fields must be' +
+                  `a key value pair of strings. key '${dbbField}' has a value typeof '${typeof payloadField}'`));
             }
+            payload[payloadField] = dbDoc[dbbField];
           }
+        }
 
-          // Integrator provided function that injects arbitrary fields into the payload from "other" sources
-          if (options.onJWTPayloadInject) {
-            return options
-              .onJWTPayloadInject(payload, dbDoc)
-              .then((updatedPayload) => {
-                return updatedPayload;
-              });
-          } else {
-            return payload;
-          }
-        })
-        .then(buildJwtToken)
-        .then(async (token) =>
-          (options.onLoginSuccess)
-            ? new Promise((resolve, reject) =>
-              options
-                .onLoginSuccess(userInfo, token, sapi, req, res)
-                .then(() => resolve(token))
-                .catch((err) => {
-                  reject(err);
-                }))
-            : Promise.resolve(token))
-        .then((token) => locals.send(200, {token}))
-        .then(() => userInfo.save({[fields.lastLoginDb]: new Date()}))
-        .then(() => next())
-        .catch(async (err) => {
-          if (err.statusCode) {
-            locals.send(err.statusCode, {error: err.message});
-            return next();
-          }
+        // Integrator provided function that injects arbitrary fields into the payload from "other" sources
+        if (options.onJWTPayloadInject) {
+          payload = await options.onJWTPayloadInject(payload, dbDoc, domain);
+        }
 
-          if (err === 401 || err === 403) {
-            locals.status = err;
-            return next();
-          }
+        const token = await buildJwtToken(payload, userInfo);
 
-          locals.send(500, {error: 'internal_server_error'});
+        if (options.onLoginSuccess) {
+          await options.onLoginSuccess(userInfo, token, sapi, req, res, domain);
+        }
 
-          if (options.onError) {
-            await options.onError(err);
-          }
+        locals.send(200, {token});
+        await userInfo.save({[fields.lastLoginDb]: new Date()});
 
+        next();
+      } catch (err) {
+        if (err.statusCode) {
+          locals.send(err.statusCode, {error: err.message});
           return next();
-        });
+        }
+
+        if (err === 401 || err === 403) {
+          locals.status = err;
+          return next();
+        }
+
+        locals.send(500, {error: 'internal_server_error'});
+
+        if (options.onError) {
+          await options.onError(err);
+        }
+
+        next();
+      }
 
       //////////
 
@@ -833,140 +835,148 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
        * Takes an object that defines the payload of the token, then generates a token for the issuer
        * and each of the audience servers supported by this issuer server.
        * @param payload the JWT payload
+       * * @param {NativeAuthenticationAuthorityUser} userInfo
        * @returns {any} An object with each of its properties representing an audience server and each of the values
        * being the JWT token signed for that audience server.
        */
-      function buildJwtToken(payload): Promise<any> {
+      async function buildJwtToken(payload: any, userInfo: NativeAuthenticationAuthorityUser): Promise<any> {
         const key = jwtAuthConfig.key;
         const issuer = jwtAuthConfig.issuer;
         const exp = jwtAuthConfig.exp || '48h';
 
-        if (!key || key === '' || !issuer || issuer === '') {
-          return Promise
-            .reject(new Error(`Unable to proceed, server misconfiguration. 'authentication.jwt.key' length?: ` +
+        try {
+          if (!key || key === '' || !issuer || issuer === '') {
+            throw new Error(`Unable to proceed, server misconfiguration. 'authentication.jwt.key' length?: ` +
               `'${key.length}' [note: value redacted for security], ` +
-              `authentication.jwt.issuer value?: '${issuer || '>VALUE MISSING<'}'. These are required fields.`));
-        }
-
-        // self sign the payload - the issuer should never trust a token passed to it by an audience server since
-        // they share a common private key - i.e., the audience server could be compromised and modify the token
-        // before passing it to the issuing server. This only applies with server to server communication. For example,
-        // Client authenticates with issuer, getting a key for an audience server. It passes the token to the audience
-        // server, which then uses that token in a direct communication to the issuer. The client can't modify the
-        // payload, but since the audience server has the private key, it could. The issSig allows the issuer to verify
-        // that the payload hasn't been tampered with by the audience server.
-        const hmac = createHmac('sha256', key);
-        hmac.update(JSON.stringify(payload));
-        (payload as any).issSig = hmac.digest('hex');
-
-        const wait = [];
-        const audiences = [];
-
-        const jti = uuid();
-
-        // Issuer Token
-        wait.push(generateToken(key, issuer, issuer, exp, payload, jti));
-        audiences.push(issuer);
-
-        // Audience Tokens
-        const audienceConfig = jwtAuthConfig.audiences;
-        if (audienceConfig) {
-          for (const jwtAudience of Object.keys(audienceConfig)) {
-            const audienceKey = audienceConfig[jwtAudience];
-            if (typeof audienceKey !== 'string') {
-              return Promise.reject(new Error('Invalid authentication.jwt.audiences key defined. The value must be a '
-                + 'secret key in the form of a string.'));
-            }
-
-            wait.push(generateToken(audienceKey, issuer, jwtAudience, exp, payload, jti));
-            audiences.push(jwtAudience);
+              `authentication.jwt.issuer value?: '${issuer || '>VALUE MISSING<'}'. These are required fields.`);
           }
-        }
 
-        return Promise
-          .all(wait)
-          .then((jwtTokens) => {
-            const token = {};
+          // self sign the payload - the issuer should never trust a token passed to it by an audience server since
+          // they share a common private key - i.e., the audience server could be compromised and modify the token
+          // before passing it to the issuing server. This only applies with server to server communication. For example,
+          // Client authenticates with issuer, getting a key for an audience server. It passes the token to the audience
+          // server, which then uses that token in a direct communication to the issuer. The client can't modify the
+          // payload, but since the audience server has the private key, it could. The issSig allows the issuer to verify
+          // that the payload hasn't been tampered with by the audience server.
+          const hmac = createHmac('sha256', key);
+          hmac.update(JSON.stringify(payload));
+          payload.issSig = hmac.digest('hex');
 
-            let i = 0;
-            for (const result of jwtTokens) {
-              token[audiences[i]] = result;
-              i++;
+          const wait = [];
+          const audiences = [];
+          const jti = uuid();
+
+          // Issuer Token
+          wait.push(generateToken(key, issuer, issuer, exp, payload, jti));
+          audiences.push(issuer);
+
+          // Audience Tokens
+          let audienceConfig;
+          if (jwtAuthConfig.domainedAudiences) {
+            audienceConfig = jwtAuthConfig.domainedAudiences[domain];
+          } else if (jwtAuthConfig.audiences) {
+            audienceConfig = jwtAuthConfig.audiences;
+          }
+
+          if (audienceConfig) {
+            const keys = Object.keys(audienceConfig);
+            for (const jwtAudience of keys) {
+              const audienceKey = audienceConfig[jwtAudience];
+              if (typeof audienceKey !== 'string') {
+                throw new Error('Invalid authentication.jwt.audiences key defined. The value must be a '
+                  + 'secret key in the form of a string.');
+              }
+
+              wait.push(generateToken(audienceKey, issuer, jwtAudience, exp, payload, jti));
+              audiences.push(jwtAudience);
             }
+          }
 
-            return (() => (options.onInjectCustomToken)
-              ? options.onInjectCustomToken(token, key, issuer, exp, payload, jti)
-              : Promise.resolve([]))
-            ()
-              .then((customTokens: ICustomTokenResult[]) => {
+          const jwtTokens = await Promise.all(wait);
+          const token = {};
 
-                const customTokensForLog = [];
-                for (const customToken of customTokens) {
-                  token[customToken.audience] = customToken.token;
+          let i = 0;
+          for (const result of jwtTokens) {
+            token[audiences[i]] = result;
+            i++;
+          }
 
-                  customTokensForLog.push({
-                    audience: `${customToken.audience}`,
-                    token: customToken.unEncodedToken || customToken.token
-                  });
-                }
+          let customTokens: ICustomTokenResult[] = [];
+          if (options.onInjectCustomToken) {
+            customTokens = await options.onInjectCustomToken(token, key, issuer, exp, payload, jti, domain);
+          }
 
-                const logAuth = new AuthenticationLog();
-                logAuth.userId = userInfo.id;
+          const customTokensForLog = [];
+          for (const customToken of customTokens) {
+            token[customToken.audience] = customToken.token;
 
-                logAuth.token = [{
-                  audience: `${audiences.join(',')}`,
-                  token: decodeToken(jwtTokens[0])
-                }, ...customTokensForLog];
+            customTokensForLog.push({
+              audience: `${customToken.audience}`,
+              token: customToken.unEncodedToken || customToken.token
+            });
+          }
 
-                logAuth.ip = req.ip;
-                logAuth.port = req.connection.remotePort;
-                logAuth.url = req.originalUrl;
-                logAuth.hostName = req.hostname;
+          const logAuth = new AuthenticationLog();
+          logAuth.userId = userInfo.id;
 
-                logAuth.audience = audiences;
+          logAuth.token = [{
+            audience: `${audiences.join(',')}`,
+            token: decodeToken(jwtTokens[0])
+          }, ...customTokensForLog];
 
-                logAuth.jwTokenId = jti;
-                logAuth.created = new Date();
+          logAuth.ip = req.ip;
+          logAuth.port = req.connection.remotePort;
+          logAuth.url = req.originalUrl;
+          logAuth.hostName = req.hostname;
 
-                return logAuth
-                  .create()
-                  .then(() => {
-                    return token;
-                  });
-              });
-          });
+          logAuth.audience = audiences;
+
+          logAuth.jwTokenId = jti;
+          logAuth.created = new Date();
+
+          await logAuth.create();
+          return token;
+
+        } catch (err) {
+          throw err;
+        }
       }
 
       function generateToken(key: string, issuer: string, audience: string,
                              exp: string, payload: any, jti: string): Promise<string> {
         return new Promise((resolve, reject) => {
-          signToken(payload, key, {
-            audience,
-            expiresIn: exp,
-            issuer,
-            jwtid: jti
-          }, (err, token) => {
-            if (err) {
-              reject(err);
-            }
-            resolve(token);
-          });
+          signToken(payload,
+            key,
+            {
+              audience,
+              expiresIn: exp,
+              issuer,
+              jwtid: jti
+            }, (err, token) => {
+              (err)
+                ? reject(err)
+                : resolve(token);
+            });
         });
       }
     }
 
     /**
-     * send a new email verification key
+     * send a new email verification key. If the email/domain is not found, `onResendEmailConfirmation` is still
+     * called. It's up to the integrator to determine the desired behavior in terms of what should be returned
+     * in this circumstance. We'd suggest 200 + whatever you normally return so as to not hint
+     * to a bad guy that they stumbled upon a valid email/domain pair.
+     *
+     * You can set the return behavior of newEmailVerificationKey with res.locals.
      */
     @Route({
       method: 'post',
       path: endpoints.newEmailVerificationKey || 'auth/native/confirm'
     })
-    newEmailVerificationKey(req: Request, res: Response, next: NextFunction) {
+    async newEmailVerificationKey(req: Request, res: Response, next: NextFunction): Promise<void> {
       const locals = res.locals as IRoutableLocals;
 
       const email = `${locals.reqBody.email}`;
-      const password = `${locals.reqBody.password}`;
       const domain = `${locals.reqBody.domain || options.defaultDomain || nativeAuthConfig.defaultDomain}`;
 
       const query = {
@@ -974,30 +984,28 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         [fields.domainJson]: domain
       };
 
-      let user;
-      NativeAuthenticationAuthorityUser
-        .getOne(query)
-        .then((userFound) => {
-          if (userFound) {
-            user = userFound;
-            return this.encryptToken({userId: user.id});
-          }
-        })
-        .then((key) => options.onResendEmailConfirmation(user, key, req, res))
-        .then(() => next())
-        .catch(async (err) => {
-          locals.send(500, {error: 'internal_server_error'});
+      try {
+        const user = await NativeAuthenticationAuthorityUser.getOne(query);
 
-          if (options.onError) {
-            options.onError(err);
-          }
+        const key = (user)
+          ? await this.encryptToken({userId: user.id})
+          : '';
 
-          next();
-        });
+        await options.onResendEmailConfirmation(user, key, req, res, domain);
+        next();
+      } catch (err) {
+
+        locals.send(500, {error: 'internal_server_error'});
+
+        if (options.onError) {
+          options.onError(err);
+        }
+        next();
+      }
     }
 
     /**
-     * resets a forgotten password and sets email verified to true... a user should only be able to peform this task
+     * resets a forgotten password and sets email verified to true... a user should only be able to perform this task
      * if he/she received a token at their email that let to a portal that send that token back into this
      * endpoint... so, if the user's email verified was false, there's no reason to further pester them to verify their
      * email.
@@ -1006,78 +1014,65 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       method: 'put',
       path: endpoints.resetPassword || 'auth/native/reset-password/:token'
     })
-    resetPassword(req: Request, res: Response, next: NextFunction) {
+    async resetPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
       const locals = res.locals as IRoutableLocals;
 
       const password = `${locals.reqBody.password}`;
 
-      let user;
-      let token;
-      Promise
-        .resolve()
-        .then(() => {
-          if (!locals.reqBody.password || typeof locals.reqBody.password !== 'string') {
-            throw 400;
-          }
+      try {
+        if (!locals.reqBody.password || typeof locals.reqBody.password !== 'string') {
+          throw 400;
+        }
 
-          const tokenParts = req.params.token.split('.');
-          if (tokenParts && tokenParts.length !== 3) {
-            throw 403;
-          }
-          return tokenParts;
-        })
-        .then(this.decryptToken)
-        .then((tkn) => {
-          const elapsedTime = new Date().getTime() - tkn.issued;
-          if (elapsedTime > 24 * 3600000) { // 24 * 1 hour
-            throw 403;
-          }
-          token = tkn;
-        })
-        .then(() => NativeAuthenticationAuthorityUser.getById(token.userId, {
+        const tokenParts = req.params.token.split('.');
+        if (tokenParts && tokenParts.length !== 3) {
+          throw 403;
+        }
+
+        const token = await this.decryptToken(tokenParts);
+
+        const elapsedTime = new Date().getTime() - token.issued;
+        if (elapsedTime > 24 * 3600000) { // 24 * 1 hour
+          throw 403;
+        }
+
+        const user = await  NativeAuthenticationAuthorityUser.getById(token.userId, {
           [fields.passwordDb]: 1,
           [fields.passwordResetHashDb]: 1
-        }))
-        .then((usr) => {
-          if (!usr) {
-            throw 403;
-          }
+        });
 
-          if (usr[fields.passwordResetHashDb] !== this.hashToken(req.params.token)) {
-            throw 403;
-          }
-          user = usr;
-        })
-        .then(() => bcryptHash(password, bcryptHashRounds))
-        .then((pwHash) => user.save({
+        if (!user || user[fields.passwordResetHashDb] !== this.hashToken(req.params.token)) {
+          throw 403;
+        }
+
+        const pwHash = await bcryptHash(password, bcryptHashRounds);
+        await user.save({
           [fields.emailVerifiedDb]: true, // in theory, the only way they got the token to do this was with their email
           [fields.passwordDb]: pwHash,
           [fields.passwordResetHashDb]: null,
           [fields.passwordSetDateDb]: new Date(),
           [fields.passwordStrengthDb]: pwStrength(password).score
-        }))
-        .then(() => next())
-        .catch(async (err) => {
-          if (err === 400) {
-            locals.send(400, {error: 'bad_request'});
-            return next();
-          }
-          if (err === 403) {
-            locals.send(403, {error: 'invalid_token'});
-            return next();
-          }
-          locals.send(500, {error: 'internal_server_error'});
-
-          if (options.onError) {
-            options.onError(err);
-          }
-
-          return next();
         });
 
-    }
+        next();
+      } catch (err) {
+        if (err === 400) {
+          locals.send(400, {error: 'bad_request'});
+          return next();
+        }
+        if (err === 403) {
+          locals.send(403, {error: 'invalid_token'});
+          return next();
+        }
+        locals.send(500, {error: 'internal_server_error'});
 
-    //////////
+        if (options.onError) {
+          options.onError(err);
+        }
+
+        next();
+      }
+    }
 
     private encryptToken(keyContent: { [key: string]: any }): Promise<string> {
       return new Promise((resolve, reject) => {

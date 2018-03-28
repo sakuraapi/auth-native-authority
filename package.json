@@ -1,6 +1,6 @@
 {
   "name": "@sakuraapi/auth-native-authority",
-  "version": "0.3.0-15",
+  "version": "0.3.0",
   "description": "Middleware to support native authentication capabilities",
   "main": "lib/src/index.js",
   "types": "lib/src/index.d.js",
@@ -22,7 +22,7 @@
     "lint:code": "echo 'CODE LINT' ; npm run tslint -- -t stylish -c tslint.json -p tsconfig.json",
     "lint:tests": "echo 'TEST LINT' ; npm run tslint -- -t stylish -c tslint.spec.json -p tsconfig.spec.json",
     "nsp": "nsp",
-    "prepublish": "npm run build:clean && npm build && npm test && npm run nsp check",
+    "prepare": "npm run build:clean && npm build && npm test && npm run nsp check",
     "say:fail": "say 'fail' || echo ''",
     "say:pass": "say 'pass' || echo ''",
     "test": "chmod u+x scripts/*.sh && scripts/test.sh",
