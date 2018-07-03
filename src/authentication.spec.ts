@@ -1,26 +1,11 @@
-import {
-  IRoutableLocals,
-  SakuraApi
-}                                  from '@sakuraapi/core';
-import {
-  createCipheriv,
-  randomBytes
-}                                  from 'crypto';
-import {
-  Request,
-  Response
-}                                  from 'express';
-import {agent as request}          from 'supertest';
-import {encode as urlBase64Encode} from 'urlsafe-base64';
-import {dbs}                       from '../spec/helpers/db';
-import {
-  testSapi,
-  testUrl
-}                                  from '../spec/helpers/sakura-api';
-import {
-  addAuthenticationAuthority,
-  ICustomTokenResult
-}                                  from './authentication';
+import { IRoutableLocals, SakuraApi } from '@sakuraapi/core';
+import { createCipheriv, randomBytes } from 'crypto';
+import { Request, Response } from 'express';
+import { agent as request } from 'supertest';
+import { encode as urlBase64Encode } from 'urlsafe-base64';
+import { dbs } from '../spec/helpers/db';
+import { testSapi, testUrl } from '../spec/helpers/sakura-api';
+import { addAuthenticationAuthority, ICustomTokenResult } from './authentication';
 
 const TEST_DOMAIN = 'default';
 const TEST_EMAIL = 'sakura-test@sakuraapi.com';
@@ -30,23 +15,20 @@ describe('addAuthenticationAuthority', () => {
 
   let sapi: SakuraApi;
 
-  afterEach(async (done) => {
+  afterEach(async () => {
     if (!sapi) {
-      return done();
+      return;
     }
 
     await sapi
       .dbConnections
       .getDb('user')
       .collection(dbs.user.collection)
-      .deleteMany({})
-      .catch(done.fail);
+      .deleteMany({});
 
-    sapi
-      .close()
-      .then(() => sapi = null)
-      .then(done)
-      .catch(done.fail);
+    await sapi.close();
+    sapi = null;
+
   });
 
   describe('AuthenticationAuthorityApi', () => {
@@ -56,7 +38,7 @@ describe('addAuthenticationAuthority', () => {
       let onChangePasswordEmailRequestCalled = false;
       let results: any;
 
-      beforeEach((done) => {
+      beforeEach(async () => {
 
         sapi = testSapi({
           models: [],
@@ -66,44 +48,40 @@ describe('addAuthenticationAuthority', () => {
               onChangePasswordEmailRequest: async (user, req, res, domain) => {
                 onChangePasswordEmailRequestCalled = true;
                 results = {domain, user};
-              }
+              },
+              onError
             },
             plugin: addAuthenticationAuthority
           }],
           routables: []
         });
 
-        sapi
-          .listen({bootMessage: ''})
-          .then(done)
-          .catch(done.fail);
+        await sapi.listen({bootMessage: ''});
+
       });
 
       afterEach(() => onChangePasswordEmailRequestCalled = false);
 
-      it('returns 400 with invalid body', (done) => {
-        request(sapi.app)
+      it('returns 400 with invalid body', async () => {
+        await request(sapi.app)
           .put(testUrl(endpoint, sapi))
-          .expect(400)
-          .then(done)
-          .catch(done.fail);
+          .expect(400);
+
       });
 
-      it('returns 401 when user not found', (done) => {
-        request(sapi.app)
+      it('returns 401 when user not found', async () => {
+        await request(sapi.app)
           .put(testUrl(endpoint, sapi))
           .expect(401)
           .send({
             currentPassword: TEST_PASSWORD,
             email: TEST_EMAIL,
             newPassword: '123'
-          })
-          .then(done)
-          .catch(done.fail);
+          });
       });
 
-      it('returns 401 when user password is invalid', async (done) => {
-        await createTestUser(sapi).catch(done.fail);
+      it('returns 401 when user password is invalid', async () => {
+        await createTestUser(sapi);
 
         request(sapi.app)
           .put(testUrl(endpoint, sapi))
@@ -112,13 +90,11 @@ describe('addAuthenticationAuthority', () => {
             email: TEST_EMAIL,
             newPassword: '123'
           })
-          .expect(401)
-          .then(done)
-          .catch(done.fail);
+          .expect(401);
       });
 
-      it('calls onChangePasswordEmailRequest when provided', async (done) => {
-        await createTestUser(sapi).catch(done.fail);
+      it('calls onChangePasswordEmailRequest when provided', async () => {
+        await createTestUser(sapi);
 
         await request(sapi.app)
           .put(testUrl(endpoint, sapi))
@@ -128,15 +104,13 @@ describe('addAuthenticationAuthority', () => {
             email: TEST_EMAIL,
             newPassword: '123'
           })
-          .expect(200)
-          .catch(done.fail);
+          .expect(200);
 
         expect(onChangePasswordEmailRequestCalled).toBeTruthy();
         expect(results.user).toBeDefined();
         expect(results.user.email).toBe(TEST_EMAIL);
         expect(results.domain).toBe(TEST_DOMAIN);
 
-        done();
       });
     });
 
@@ -144,7 +118,7 @@ describe('addAuthenticationAuthority', () => {
       let onBeforeUserCreateCalled = false;
       let results: any = {};
 
-      beforeEach(async (done) => {
+      beforeEach(async () => {
         sapi = testSapi({
           models: [],
           plugins: [{
@@ -159,7 +133,8 @@ describe('addAuthenticationAuthority', () => {
                   domain,
                   newUser
                 };
-              }
+              },
+              onError
             },
             plugin: addAuthenticationAuthority
           }],
@@ -167,7 +142,6 @@ describe('addAuthenticationAuthority', () => {
         });
 
         await sapi.listen({bootMessage: ''});
-        done();
       });
 
       afterEach(() => {
@@ -175,32 +149,28 @@ describe('addAuthenticationAuthority', () => {
         results = null;
       });
 
-      it('returns 400 when missing email', async (done) => {
-        const result: any = await request(sapi.app)
+      it('returns 400 when missing email', async () => {
+        const result = await request(sapi.app)
           .post(testUrl('/auth/native', sapi))
-          .expect(400)
-          .catch(done.fail);
+          .expect(400);
 
         expect(result.body.error).toBe('email address is invalid, check body');
-        done();
       });
 
-      it('returns 400 when missing password', async (done) => {
+      it('returns 400 when missing password', async () => {
 
-        const result: any = await request(sapi.app)
+        const result = await request(sapi.app)
           .post(testUrl('/auth/native', sapi))
           .send({
             email: 'test'
           })
-          .expect(400)
-          .catch(done.fail);
+          .expect(400);
 
         expect(result.body.error).toBe('password is invalid, check body');
-        done();
       });
 
-      it('returns 409 on attempting to create a user that exists', async (done) => {
-        const user = await createTestUser(sapi).catch(done.fail);
+      it('returns 409 on attempting to create a user that exists', async () => {
+        await createTestUser(sapi);
 
         const result = await request(sapi.app)
           .post(testUrl('/auth/native', sapi))
@@ -212,96 +182,82 @@ describe('addAuthenticationAuthority', () => {
           .expect(409);
 
         expect(result.body.error).toBe('email_in_use');
-
-        done();
       });
 
-      it('creates a user', (done) => {
-        createTestUser(sapi)
-          .then((user) => {
-            expect(user).toBeDefined('user was not inserted');
-            expect(user.email).toBe(TEST_EMAIL);
-            expect(user.emailVerified).toBeFalsy('emailVerified should be false until user verifies');
-            expect(user.pw.split('$').length).toBe(4, 'Improperly formatted token, it should be bcrypt hashed');
-          })
-          .then(done)
-          .catch(done.fail);
+      it('creates a user', async () => {
+        const user = await createTestUser(sapi);
+
+        expect(user).toBeDefined('user was not inserted');
+        expect(user.email).toBe(TEST_EMAIL);
+        expect(user.emailVerified).toBeFalsy('emailVerified should be false until user verifies');
+        expect(user.pw.split('$').length).toBe(4, 'Improperly formatted token, it should be bcrypt hashed');
       });
 
-      it('calls onUserCreated if provided', async (done) => {
-
-        await createTestUser(sapi).catch(done.fail);
+      it('calls onUserCreated if provided', async () => {
+        await createTestUser(sapi);
 
         expect(results).toBeDefined();
         expect(results.domain).toBe(TEST_DOMAIN);
         expect(results.newUser.email).toBe(TEST_EMAIL);
 
-        done();
       });
 
-      it('calls onBeforeUserCreate if provided', async (done) => {
-        await createTestUser(sapi).catch(done.fail);
+      it('calls onBeforeUserCreate if provided', async () => {
+        await createTestUser(sapi);
 
         expect(onBeforeUserCreateCalled).toBeTruthy();
-
-        done();
       });
     });
 
     describe('emailVerification', () => {
       const endpoint = '/auth/native/confirm';
 
-      beforeEach((done) => {
+      beforeEach(async () => {
         sapi = testSapi({
           models: [],
           plugins: [{
             options: {
-              bcryptHashRounds: 1
+              bcryptHashRounds: 1,
+              onError
             },
             plugin: addAuthenticationAuthority
+
           }],
           routables: []
         });
 
-        sapi
-          .listen({bootMessage: ''})
-          .then(done)
-          .catch(done.fail);
+        await sapi.listen({bootMessage: ''});
       });
 
-      it('returns 403 if token is invalid', async (done) => {
-        const result: any = await request(sapi.app)
+      it('returns 403 if token is invalid', async () => {
+        const result = await request(sapi.app)
           .get(testUrl(`${endpoint}/123`, sapi))
-          .expect(403)
-          .catch(done.fail);
+          .expect(403);
 
         expect(result.body.error).toBe('invalid_token');
-        done();
       });
 
-      it('returns 403 if it cannot find the user', async (done) => {
+      it('returns 403 if it cannot find the user', async () => {
 
-        const token = await encryptToken({userId: '123'}, sapi).catch(done.fail);
+        const token = await encryptToken({userId: '123'}, sapi);
 
-        const result: any = await request(sapi.app)
+        const result = await request(sapi.app)
           .get(testUrl(`${endpoint}/${token}`, sapi))
           .expect(403);
 
         expect(result.body.error).toBe('invalid_token');
-        done();
       });
 
-      it('switches a user to email verified when provided a proper token', async (done) => {
+      it('switches a user to email verified when provided a proper token', async () => {
         const user = await createTestUser(sapi);
 
         expect(user.emailVerified).toBeFalsy();
 
-        const token = await encryptToken({userId: user._id, test: true}, sapi).catch(done.fail);
+        const token = await encryptToken({userId: user._id, test: true}, sapi);
 
         await request(sapi.app)
           .get(testUrl(`${endpoint}/${token}`, sapi))
-          .expect(200)
-          .catch(done.fail);
+          .expect(200);
 
         const updatedUser = await sapi
           .dbConnections
@@ -310,8 +266,6 @@ describe('addAuthenticationAuthority', () => {
           .findOne({_id: user._id});
 
         expect(updatedUser.emailVerified).toBeTruthy();
-
-        done();
       });
     });
 
@@ -319,7 +273,7 @@ describe('addAuthenticationAuthority', () => {
       const endpoint = '/auth/native/forgot-password';
       let results = null;
 
-      beforeEach((done) => {
+      beforeEach(async () => {
         sapi = testSapi({
           models: [],
           plugins: [{
@@ -333,68 +287,60 @@ describe('addAuthenticationAuthority', () => {
                 };
                 const locals = res.locals as IRoutableLocals;
                 locals.send(222, {pass: true});
-              }
+              },
+              onError
             },
             plugin: addAuthenticationAuthority
           }],
           routables: []
         });
 
-        sapi
-          .listen({bootMessage: ''})
-          .then(done)
-          .catch(done.fail);
+        await sapi.listen({bootMessage: ''});
       });
 
       afterEach(() => results = null);
 
-      it('calls onForgotPasswordEmailRequest with  user & token null, allowing custom response code', async (done) => {
-        const result: any = await request(sapi.app)
+      it('calls onForgotPasswordEmailRequest with  user & token null, allowing custom response code', async () => {
+        const result = await request(sapi.app)
           .put(testUrl(endpoint, sapi))
           .send({domain: TEST_DOMAIN})
-          .expect(222)
-          .catch(done.fail);
+          .expect(222);
 
         expect(results.domain).toBe(TEST_DOMAIN);
         expect(results.user).toBeUndefined();
         expect(results.token).toBeUndefined();
         expect(result.body.pass).toBeTruthy();
-        done();
       });
 
       it('valid request with unknown email/domain calls onForgotPasswordEmailRequest with user & token ' +
-        'null, allowing custom response code', async (done) => {
+        'null, allowing custom response code', async () => {
 
-        const result: any = await request(sapi.app)
+        const result = await request(sapi.app)
           .put(testUrl(endpoint, sapi))
           .send({
             domain: TEST_DOMAIN,
             email: TEST_EMAIL
           })
-          .expect(222)
-          .catch(done.fail);
+          .expect(222);
 
         expect(results.domain).toBe(TEST_DOMAIN);
         expect(results.user).toBeUndefined();
         expect(results.token).toBeUndefined();
         expect(result.body.pass).toBeTruthy();
-
-        done();
       });
 
-      it('generates a forgot password token when provided a valid email', async (done) => {
-        const user = await createTestUser(sapi).catch(done.fail);
+      it('generates a forgot password token when provided a valid email', async () => {
+        const user = await createTestUser(sapi);
 
         expect(user.pwResetId).toBeUndefined();
 
-        const result: any = await request(sapi.app)
+        const result = await request(sapi.app)
           .put(testUrl(endpoint, sapi))
           .send({
             domain: TEST_DOMAIN,
             email: TEST_EMAIL
           })
-          .expect(222)
-          .catch(done.fail);
+          .expect(222);
 
         const updatedUser = await sapi
           .dbConnections
@@ -407,8 +353,6 @@ describe('addAuthenticationAuthority', () => {
         expect(results.token.split('.').length).toBe(3);
         expect(updatedUser.pwResetId).toBeDefined();
         expect(result.body.pass).toBeTruthy();
-
-        done();
       });
 
     });
@@ -429,32 +373,26 @@ describe('addAuthenticationAuthority', () => {
       }
 
       describe('response behavior', () => {
-        beforeEach(async (done) => {
-          try {
-            sapi = testSapi({
-              models: [],
-              plugins: [{
-                options: {
-                  bcryptHashRounds: 1,
-                  onUserCreated
-                },
-                plugin: addAuthenticationAuthority
-              }],
-              routables: []
-            });
+        beforeEach(async () => {
+          sapi = testSapi({
+            models: [],
+            plugins: [{
+              options: {
+                bcryptHashRounds: 1,
+                onUserCreated,
+                onError
+              },
+              plugin: addAuthenticationAuthority
+            }],
+            routables: []
+          });
 
-            await sapi.listen({bootMessage: ''});
-
-            done();
-          } catch (err) {
-            done.fail(err);
-          }
-
+          await sapi.listen({bootMessage: ''});
         });
 
-        it('returns 403 for new user who has not yet confirmed email', async (done) => {
+        it('returns 403 for new user who has not yet confirmed email', async () => {
 
-          await createTestUser(sapi).catch(done.fail);
+          await createTestUser(sapi);
 
           await request(sapi.app)
             .post(testUrl(endpoint, sapi))
@@ -463,36 +401,30 @@ describe('addAuthenticationAuthority', () => {
               email: TEST_EMAIL,
               password: TEST_PASSWORD
             })
-            .expect(403)
-            .catch(done.fail);
-
-          done();
+            .expect(403);
         });
 
-        it('returns authentication tokens for authenticated user', async (done) => {
-          await createTestUser(sapi).catch(done.fail);
+        it('returns authentication tokens for authenticated user', async () => {
+          await createTestUser(sapi);
 
           await request(sapi.app)
             .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
-            .expect(200)
-            .catch(done.fail);
+            .expect(200);
 
-          const result: any = await request(sapi.app)
+          const result = await request(sapi.app)
             .post(testUrl('/auth/native/login', sapi))
             .send({
               domain: TEST_DOMAIN,
               email: TEST_EMAIL,
               password: TEST_PASSWORD
-            })
-            .expect(200)
-            .catch(done.fail);
+            });
 
           const body = result.body;
-          const token = result.body.token['test-issuer'];
+          const token = body.token['test-issuer'];
+          expect(result.status).toBe(200);
           expect(token).toBeDefined();
           expect(token.split('.').length).toBe(3, 'Token should have been JWT formatted');
 
-          done();
         });
       });
 
@@ -512,39 +444,36 @@ describe('addAuthenticationAuthority', () => {
           return onLoginSuccessFunc(user, jwt, sApi, req, res, domain);
         }
 
-        beforeEach((done) => {
+        beforeEach(async () => {
           sapi = testSapi({
             models: [],
             plugins: [{
               options: {
                 bcryptHashRounds: 1,
                 onLoginSuccess,
-                onUserCreated
+                onUserCreated,
+                onError
               },
               plugin: addAuthenticationAuthority
             }],
             routables: []
           });
 
-          sapi
-            .listen({bootMessage: ''})
-            .then(done)
-            .catch(done.fail);
+          await sapi.listen({bootMessage: ''});
         });
 
-        it('onUserLoginSuccess resolve', async (done) => {
+        it('onUserLoginSuccess resolve', async () => {
 
           onLoginSuccessFunc = (user: any, jwt: any, sApi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
             loginSuccessMeta = {user, jwt, sapi: sApi, req, res, domain};
             return Promise.resolve();
           };
 
-          await createTestUser(sapi).catch(done.fail);
+          await createTestUser(sapi);
 
           await request(sapi.app)
             .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
-            .expect(200)
-            .catch(done.fail);
+            .expect(200);
 
           await request(sapi.app)
             .post(testUrl('/auth/native/login', sapi))
@@ -553,8 +482,7 @@ describe('addAuthenticationAuthority', () => {
               email: TEST_EMAIL,
               password: TEST_PASSWORD
             })
-            .expect(200)
-            .catch(done.fail);
+            .expect(200);
 
           expect(loginSuccessMeta.user.constructor.name).toBe('NativeAuthenticationAuthorityUser');
           expect(loginSuccessMeta.sapi.constructor.name).toBe('SakuraApi');
@@ -563,21 +491,19 @@ describe('addAuthenticationAuthority', () => {
           expect(loginSuccessMeta.jwt['test-issuer']).toBeDefined();
           expect(loginSuccessMeta.domain).toBe(TEST_DOMAIN);
 
-          done();
         });
 
-        it('onUserLoginSuccess reject 401', async (done) => {
+        it('onUserLoginSuccess reject 401', async () => {
           onLoginSuccessFunc = (user: any, jwt: any, sApi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
             loginSuccessMeta = {user, jwt, sapi: sApi, req, res, domain};
             return Promise.reject(401);
           };
 
-          await createTestUser(sapi).catch(done.fail);
+          await createTestUser(sapi);
 
           await request(sapi.app)
             .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
-            .expect(200)
-            .catch(done.fail);
+            .expect(200);
 
           await request(sapi.app)
             .post(testUrl('/auth/native/login', sapi))
@@ -586,19 +512,16 @@ describe('addAuthenticationAuthority', () => {
               email: TEST_EMAIL,
               password: TEST_PASSWORD
             })
-            .expect(401)
-            .catch(done.fail);
-
-          done();
+            .expect(401);
         });
 
-        it('onUserLoginSuccess reject 403', async (done) => {
+        it('onUserLoginSuccess reject 403', async () => {
           onLoginSuccessFunc = (user: any, jwt: any, sApi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
             loginSuccessMeta = {user, jwt, sapi: sApi, req, res, domain};
             return Promise.reject(403);
           };
 
-          await createTestUser(sapi).catch(done.fail);
+          await createTestUser(sapi);
 
           await request(sapi.app)
             .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
@@ -612,22 +535,24 @@ describe('addAuthenticationAuthority', () => {
               password: TEST_PASSWORD
             })
             .expect(403);
-
-          done();
         });
 
-        it('onUserLoginSuccess reject sends 500 on non-401/403 reject value', async (done) => {
+        it('onUserLoginSuccess reject sends 500 on non-401/403 reject value', async () => {
+
+          spyOn(console, 'log').and.callFake(() => {
+            // noop, suppress expected error from being written to console
+          });
+
           onLoginSuccessFunc = (user: any, jwt: any, sApi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
             loginSuccessMeta = {user, jwt, sapi: sApi, req, res, domain};
             return Promise.reject(778);
           };
 
-          await createTestUser(sapi).catch(done.fail);
+          await createTestUser(sapi);
 
           await request(sapi.app)
             .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
-            .expect(200)
-            .catch(done.fail);
+            .expect(200);
 
           await request(sapi.app)
             .post(testUrl('/auth/native/login', sapi))
@@ -636,14 +561,11 @@ describe('addAuthenticationAuthority', () => {
               email: TEST_EMAIL,
               password: TEST_PASSWORD
             })
-            .expect(500)
-            .catch(done.fail);
-
-          done();
+            .expect(500);
         });
 
         it('onUserLoginSuccess reject sends custom error when ' +
-          'rejected with {statusCode:number, message:string}', async (done) => {
+          'rejected with {statusCode:number, message:string}', async () => {
 
           onLoginSuccessFunc = (user: any, jwt: any, sApi: SakuraApi, req?: Request, res?: Response, domain?: string) => {
             loginSuccessMeta = {user, jwt, sapi: sApi, req, res, domain};
@@ -664,8 +586,6 @@ describe('addAuthenticationAuthority', () => {
               password: TEST_PASSWORD
             })
             .expect(777);
-
-          done();
         });
       });
 
@@ -677,26 +597,24 @@ describe('addAuthenticationAuthority', () => {
           plugins: [{
             options: {
               bcryptHashRounds: 1,
-              onUserCreated
+              onUserCreated,
+              onError
             },
             plugin: addAuthenticationAuthority
           }],
           routables: []
         };
 
-        it('returns only domain specific tokens - test 1', async (done) => {
+        it('returns only domain specific tokens - test 1', async () => {
           sapi = testSapi({configPath: 'lib/spec/config/environment-test-domained.json', ...sapiConfig});
-          await sapi
-            .listen({bootMessage: ''})
-            .catch(done.fail);
+          await sapi.listen({bootMessage: ''});
 
           const domain = 'domain1';
 
-          await createTestUser(sapi, TEST_EMAIL, TEST_PASSWORD, domain).catch(done.fail);
+          await createTestUser(sapi, TEST_EMAIL, TEST_PASSWORD, domain);
           await request(sapi.app)
             .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
-            .expect(200)
-            .catch(done.fail);
+            .expect(200);
 
           const result: any = await request(sapi.app)
             .post(testUrl('/auth/native/login', sapi))
@@ -705,8 +623,7 @@ describe('addAuthenticationAuthority', () => {
               email: TEST_EMAIL,
               password: TEST_PASSWORD
             })
-            .expect(200)
-            .catch(done.fail);
+            .expect(200);
 
           const token = result.body.token;
 
@@ -714,23 +631,19 @@ describe('addAuthenticationAuthority', () => {
           expect(token.audience1.split('.').length).toBe(3, 'audience1 should have been included for this domain');
           expect(token.audience2.split('.').length).toBe(3, 'audience2 should have been included for this domain');
           expect(token.audience3.split('.').length).toBe(3, 'audience3 should have been included for this domain');
-
-          done();
         });
 
-        it('returns only domain specific tokens - test 2', async (done) => {
+        it('returns only domain specific tokens - test 2', async () => {
           sapi = testSapi({configPath: 'lib/spec/config/environment-test-domained.json', ...sapiConfig});
           await sapi
-            .listen({bootMessage: ''})
-            .catch(done.fail);
+            .listen({bootMessage: ''});
 
           const domain = 'domain2';
 
-          await createTestUser(sapi, TEST_EMAIL, TEST_PASSWORD, domain).catch(done.fail);
+          await createTestUser(sapi, TEST_EMAIL, TEST_PASSWORD, domain);
           await request(sapi.app)
             .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
-            .expect(200)
-            .catch(done.fail);
+            .expect(200);
 
           const result: any = await request(sapi.app)
             .post(testUrl('/auth/native/login', sapi))
@@ -739,8 +652,7 @@ describe('addAuthenticationAuthority', () => {
               email: TEST_EMAIL,
               password: TEST_PASSWORD
             })
-            .expect(200)
-            .catch(done.fail);
+            .expect(200);
 
           const token = result.body.token;
 
@@ -748,23 +660,18 @@ describe('addAuthenticationAuthority', () => {
           expect(token.audience3.split('.').length).toBe(3, 'audience3 should have been included for this domain');
           expect(token.audience1).toBeUndefined('audience1 should not have been included for this domain');
           expect(token.audience2).toBeUndefined('audience2 should not have been included for this domain');
-
-          done();
         });
 
-        it('returns only issuer token if no domain match', async (done) => {
+        it('returns only issuer token if no domain match', async () => {
           sapi = testSapi({configPath: 'lib/spec/config/environment-test-domained.json', ...sapiConfig});
-          await sapi
-            .listen({bootMessage: ''})
-            .catch(done.fail);
+          await sapi.listen({bootMessage: ''});
 
           const domain = 'non-existent';
 
-          await createTestUser(sapi, TEST_EMAIL, TEST_PASSWORD, domain).catch(done.fail);
+          await createTestUser(sapi, TEST_EMAIL, TEST_PASSWORD, domain);
           await request(sapi.app)
             .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
-            .expect(200)
-            .catch(done.fail);
+            .expect(200);
 
           const result: any = await request(sapi.app)
             .post(testUrl('/auth/native/login', sapi))
@@ -773,8 +680,7 @@ describe('addAuthenticationAuthority', () => {
               email: TEST_EMAIL,
               password: TEST_PASSWORD
             })
-            .expect(200)
-            .catch(done.fail);
+            .expect(200);
 
           const token = result.body.token;
 
@@ -782,23 +688,19 @@ describe('addAuthenticationAuthority', () => {
           expect(token.audience3).toBeUndefined('audience3 should not have been included for this domain');
           expect(token.audience1).toBeUndefined('audience1 should not have been included for this domain');
           expect(token.audience2).toBeUndefined('audience2 should not have been included for this domain');
-
-          done();
         });
 
-        it('only returns issuer if both audiences and domainedAudiences are not defined', async (done) => {
+        it('only returns issuer if both audiences and domainedAudiences are not defined', async () => {
           sapi = testSapi({configPath: 'lib/spec/config/environment-test-domained2.json', ...sapiConfig});
           await sapi
-            .listen({bootMessage: ''})
-            .catch(done.fail);
+            .listen({bootMessage: ''});
 
           const domain = 'domain2';
 
-          await createTestUser(sapi, TEST_EMAIL, TEST_PASSWORD, domain).catch(done.fail);
+          await createTestUser(sapi, TEST_EMAIL, TEST_PASSWORD, domain);
           await request(sapi.app)
             .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
-            .expect(200)
-            .catch(done.fail);
+            .expect(200);
 
           const result: any = await request(sapi.app)
             .post(testUrl('/auth/native/login', sapi))
@@ -807,8 +709,7 @@ describe('addAuthenticationAuthority', () => {
               email: TEST_EMAIL,
               password: TEST_PASSWORD
             })
-            .expect(200)
-            .catch(done.fail);
+            .expect(200);
 
           const token = result.body.token;
 
@@ -817,7 +718,6 @@ describe('addAuthenticationAuthority', () => {
           expect(token.audience2).toBeUndefined('audience2 should not have been included for this domain');
           expect(token.audience3).toBeUndefined('audience3 should not have been included for this domain');
 
-          done();
         });
 
       });
@@ -828,7 +728,7 @@ describe('addAuthenticationAuthority', () => {
       const endpoint = '/auth/native/confirm';
       let results = null;
 
-      beforeEach((done) => {
+      beforeEach(async () => {
         sapi = testSapi({
           models: [],
           plugins: [{
@@ -842,20 +742,18 @@ describe('addAuthenticationAuthority', () => {
                 };
                 const locals = res.locals as IRoutableLocals;
                 locals.send(222, {pass: true});
-              }
+              },
+              onError
             },
             plugin: addAuthenticationAuthority
           }],
           routables: []
         });
 
-        sapi
-          .listen({bootMessage: ''})
-          .then(done)
-          .catch(done.fail);
+        await sapi.listen({bootMessage: ''});
       });
 
-      it('allows integrator to return whatever if account invalid', async (done) => {
+      it('allows integrator to return whatever if account invalid', async () => {
 
         const result: any = await request(sapi.app)
           .post(testUrl(endpoint, sapi))
@@ -863,20 +761,17 @@ describe('addAuthenticationAuthority', () => {
             domain: TEST_DOMAIN,
             email: TEST_EMAIL
           })
-          .expect(222)
-          .catch(done.fail);
+          .expect(222);
 
         expect(result.body.pass).toBeTruthy();
         expect(results.domain).toBe(TEST_DOMAIN);
         expect(results.key).toBe('');
         expect(results.user).toBeNull();
-
-        done();
       });
 
-      it('generates key for valid user', async (done) => {
+      it('generates key for valid user', async () => {
 
-        const user = await createTestUser(sapi).catch(done.fail);
+        const user = await createTestUser(sapi);
 
         const result: any = await request(sapi.app)
           .post(testUrl(endpoint, sapi))
@@ -884,23 +779,21 @@ describe('addAuthenticationAuthority', () => {
             domain: TEST_DOMAIN,
             email: TEST_EMAIL
           })
-          .expect(222)
-          .catch(done.fail);
+          .expect(222);
 
         expect(result.body.pass).toBeTruthy();
         expect(results.domain).toBe(TEST_DOMAIN);
         expect(results.key.split('.').length).toBe(3);
         expect(results.user.id.toString()).toBe(user._id.toString());
 
-        done();
       });
     });
 
-    describe('resetPassword', () => {
+    describe('resetPassword', async () => {
       const endpoint = '/auth/native/reset-password';
       let token = null;
 
-      beforeEach((done) => {
+      beforeEach(async () => {
         sapi = testSapi({
           models: [],
           plugins: [{
@@ -908,34 +801,30 @@ describe('addAuthenticationAuthority', () => {
               bcryptHashRounds: 1,
               onForgotPasswordEmailRequest: async (user, tkn) => {
                 token = tkn;
-              }
+              },
+              onError
             },
             plugin: addAuthenticationAuthority
           }],
           routables: []
         });
 
-        sapi
-          .listen({bootMessage: ''})
-          .then(done)
-          .catch(done.fail);
+        await sapi.listen({bootMessage: ''});
       });
 
       afterEach(() => token = null);
 
-      it('returns 400 if password field is missing', async (done) => {
+      it('returns 400 if password field is missing', async () => {
         const tkn = '123';
 
         const result: any = await request(sapi.app)
           .put(testUrl(`${endpoint}/${tkn}`, sapi))
-          .expect(400)
-          .catch(done.fail);
+          .expect(400);
 
         expect(result.body.error).toBe('bad_request');
-        done();
       });
 
-      it('returns 403 if token is invalid', async (done) => {
+      it('returns 403 if token is invalid', async () => {
         const tkn = '123';
 
         const result: any = await request(sapi.app)
@@ -943,14 +832,12 @@ describe('addAuthenticationAuthority', () => {
           .expect(403)
           .send({
             password: TEST_PASSWORD
-          })
-          .catch(done.fail);
+          });
 
         expect(result.body.error).toBe('invalid_token');
-        done();
       });
 
-      it('returns 403 if token is expired', async (done) => {
+      it('returns 403 if token is expired', async () => {
         const tkn = await encryptToken({issued: 0}, sapi);
 
         const result: any = await request(sapi.app)
@@ -958,14 +845,12 @@ describe('addAuthenticationAuthority', () => {
           .expect(403)
           .send({
             password: TEST_PASSWORD
-          })
-          .catch(done.fail);
+          });
 
         expect(result.body.error).toBe('invalid_token');
-        done();
       });
 
-      it('returns 403 if user record does not having matching token hash', async (done) => {
+      it('returns 403 if user record does not having matching token hash', async () => {
 
         const user = await createTestUser(sapi);
 
@@ -976,8 +861,7 @@ describe('addAuthenticationAuthority', () => {
             domain: TEST_DOMAIN,
             email: TEST_EMAIL
           })
-          .expect(200)
-          .catch(done.fail);
+          .expect(200);
 
         await sapi
           .dbConnections
@@ -990,14 +874,12 @@ describe('addAuthenticationAuthority', () => {
           .send({
             password: TEST_PASSWORD
           })
-          .expect(403)
-          .catch(done.fail);
+          .expect(403);
 
         expect(result.body.error).toBe('invalid_token');
-        done();
       });
 
-      it('updates the user password', async (done) => {
+      it('updates the user password', async () => {
 
         const user = await createTestUser(sapi);
 
@@ -1008,16 +890,14 @@ describe('addAuthenticationAuthority', () => {
             domain: TEST_DOMAIN,
             email: TEST_EMAIL
           })
-          .expect(200)
-          .catch(done.fail);
+          .expect(200);
 
         const result: any = await request(sapi.app)
           .put(testUrl(`${endpoint}/${token}`, sapi))
           .send({
             password: TEST_PASSWORD + 'new'
           })
-          .expect(200)
-          .catch(done.fail);
+          .expect(200);
 
         await request(sapi.app)
           .post(testUrl('/auth/native/login', sapi))
@@ -1026,8 +906,7 @@ describe('addAuthenticationAuthority', () => {
             email: TEST_EMAIL,
             password: TEST_PASSWORD
           })
-          .expect(401)
-          .catch(done.fail);
+          .expect(401);
 
         await request(sapi.app)
           .post(testUrl('/auth/native/login', sapi))
@@ -1036,10 +915,7 @@ describe('addAuthenticationAuthority', () => {
             email: TEST_EMAIL,
             password: TEST_PASSWORD + 'new'
           })
-          .expect(200)
-          .catch(done.fail);
-
-        done();
+          .expect(200);
       });
 
     });
@@ -1051,24 +927,23 @@ describe('addAuthenticationAuthority', () => {
       newUser: null
     };
 
-    beforeEach((done) => {
+    beforeEach(async () => {
       sapi = testSapi({
         models: [],
         plugins: [{
           options: {
             bcryptHashRounds: 1,
             onInjectCustomToken,
-            onUserCreated
+            onUserCreated,
+            onError
           },
           plugin: addAuthenticationAuthority
         }],
         routables: []
       });
 
-      sapi
-        .listen({bootMessage: ''})
-        .then(done)
-        .catch(done.fail);
+      await sapi.listen({bootMessage: ''});
+
     });
 
     function onUserCreated(newUser: any, emailVerificationKey: string, req?: Request, res?: Response) {
@@ -1084,8 +959,8 @@ describe('addAuthenticationAuthority', () => {
         resolve([{
           audience: 'third-party-audience.com',
           token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' +
-          'eyJ1c2VyIjoiMTIzMTIzIiwiYXBpU2VjcmV0IjoiMzIxMzIxLTMyMS0zMjEtMzIxLTMyMSIsImlhdCI6MTQ4MTE0OTAwMn0.' +
-          'Ds_WzcGI4tVq2oqSical36Ej0L12BC6UA-yCUzAfnd4',
+            'eyJ1c2VyIjoiMTIzMTIzIiwiYXBpU2VjcmV0IjoiMzIxMzIxLTMyMS0zMjEtMzIxLTMyMSIsImlhdCI6MTQ4MTE0OTAwMn0.' +
+            'Ds_WzcGI4tVq2oqSical36Ej0L12BC6UA-yCUzAfnd4',
           unEncodedToken: {
             apiSecret: '321321-321-321-321-321',
             iat: 1481149002,
@@ -1099,48 +974,44 @@ describe('addAuthenticationAuthority', () => {
       const email = 'sakura-test@sakuraapi.com';
       const password = '123';
 
-      it('returns custom tokens for authenticated user', (done) => {
-        request(sapi.app)
+      it('returns custom tokens for authenticated user', async () => {
+        await request(sapi.app)
           .post(testUrl('/auth/native', sapi))
           .send({
             email,
             password
           })
-          .expect(200)
-          .then(() => {
-            return request(sapi.app)
-              .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
-              .expect(200);
-          })
-          .then(() => {
-            return request(sapi.app)
-              .post(testUrl('/auth/native/login', sapi))
-              .send({
-                email,
-                password
-              })
-              .expect(200);
-          })
-          .then((result) => {
-            const body = result.body;
-            const testIssuer = body.token['test-issuer'];
-            const testAudience = body.token['test-audience'];
-            const thirdPartyAudience = body.token['third-party-audience.com'];
+          .expect(200);
 
-            expect(testIssuer).toBeDefined();
-            expect(testIssuer.split('.').length).toBe(3, 'Token should have been JWT formatted');
+        await request(sapi.app)
+          .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
+          .expect(200);
 
-            expect(testAudience).toBeDefined();
-            expect(testAudience.split('.').length).toBe(3, 'Token should have been JWT formatted');
-
-            expect(thirdPartyAudience).toBeDefined();
-            expect(thirdPartyAudience.split('.').length).toBe(3, 'Token should have been JWT formatted');
-            expect(thirdPartyAudience).toBe('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9' +
-              '.eyJ1c2VyIjoiMTIzMTIzIiwiYXBpU2VjcmV0IjoiMzIxMzIxLTMyMS0zMjEtMzIxLTMyMSIsImlhdCI6MTQ4MTE0OTAwMn0' +
-              '.Ds_WzcGI4tVq2oqSical36Ej0L12BC6UA-yCUzAfnd4');
+        const result = await request(sapi.app)
+          .post(testUrl('/auth/native/login', sapi))
+          .send({
+            email,
+            password
           })
-          .then(done)
-          .catch(done.fail);
+          .expect(200);
+
+        const body = result.body;
+        const testIssuer = body.token['test-issuer'];
+        const testAudience = body.token['test-audience'];
+        const thirdPartyAudience = body.token['third-party-audience.com'];
+
+        expect(testIssuer).toBeDefined();
+        expect(testIssuer.split('.').length).toBe(3, 'Token should have been JWT formatted');
+
+        expect(testAudience).toBeDefined();
+        expect(testAudience.split('.').length).toBe(3, 'Token should have been JWT formatted');
+
+        expect(thirdPartyAudience).toBeDefined();
+        expect(thirdPartyAudience.split('.').length).toBe(3, 'Token should have been JWT formatted');
+        expect(thirdPartyAudience).toBe('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9' +
+          '.eyJ1c2VyIjoiMTIzMTIzIiwiYXBpU2VjcmV0IjoiMzIxMzIxLTMyMS0zMjEtMzIxLTMyMSIsImlhdCI6MTQ4MTE0OTAwMn0' +
+          '.Ds_WzcGI4tVq2oqSical36Ej0L12BC6UA-yCUzAfnd4');
+
       });
     });
   });
@@ -1189,4 +1060,10 @@ function encryptToken(keyContent: { [key: string]: any }, sapi: SakuraApi): Prom
       reject(err);
     }
   });
+}
+
+async function onError(err) {
+  console.log(`unexpecetd auth error------------------------`.red);
+  console.log(err);
+  console.log(`^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^`.red);
 }

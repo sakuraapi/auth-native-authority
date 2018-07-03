@@ -1,44 +1,14 @@
 import {
-  Db,
-  IAuthenticatorConstructor,
-  IRoutableLocals,
-  Json,
-  Model,
-  Routable,
-  Route,
-  SakuraApi,
-  SakuraApiPluginResult,
-  SapiModelMixin,
-  SapiRoutableMixin
-}                      from '@sakuraapi/core';
-import {
-  compare,
-  hash as bcryptHash
-}                      from 'bcrypt';
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  createHmac,
-  randomBytes
-}                      from 'crypto';
-import {
-  Handler,
-  NextFunction,
-  Request,
-  Response
-}                      from 'express';
-import {
-  decode as decodeToken,
-  sign as signToken
-}                      from 'jsonwebtoken';
-import {ObjectID}      from 'mongodb';
-import {
-  decode as urlBase64Decode,
-  encode as urlBase64Encode,
-  validate as urlBase64Validate
-}                      from 'urlsafe-base64';
-import {v4 as uuid}    from 'uuid';
+  Db, IAuthenticatorConstructor, Id, IRoutableLocals, Json, Model, Routable, Route, SakuraApi, SakuraApiPluginResult,
+  SapiModelMixin, SapiRoutableMixin
+} from '@sakuraapi/core';
+import { compare, hash as bcryptHash } from 'bcrypt';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'crypto';
+import { Handler, NextFunction, Request, Response } from 'express';
+import { decode as decodeToken, sign as signToken } from 'jsonwebtoken';
+import { ObjectID } from 'mongodb';
+import { decode as urlBase64Decode, encode as urlBase64Encode, validate as urlBase64Validate } from 'urlsafe-base64';
+import { v4 as uuid } from 'uuid';
 import * as pwStrength from 'zxcvbn';
 
 const IV_LENGTH = 16;
@@ -334,48 +304,48 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
   // Model Field Name Configuration
   const fields = {
     domainDb: ((options.model || {} as any).domain || {} as any).dbField
-    || ((nativeAuthConfig.model || {} as any).domain || {} as any).dbField
-    || 'domain',
+      || ((nativeAuthConfig.model || {} as any).domain || {} as any).dbField
+      || 'domain',
 
     domainJson: ((options.model || {} as any).domain || {} as any).jsonField
-    || ((nativeAuthConfig.model || {} as any).domain || {} as any).jsonField
-    || 'domain',
+      || ((nativeAuthConfig.model || {} as any).domain || {} as any).jsonField
+      || 'domain',
 
     emailDb: ((options.model || {} as any).email || {} as any).dbField
-    || ((nativeAuthConfig.model || {} as any).email || {} as any).dbField
-    || 'email',
+      || ((nativeAuthConfig.model || {} as any).email || {} as any).dbField
+      || 'email',
 
     emailJson: ((options.model || {} as any).email || {} as any).jsonField
-    || ((nativeAuthConfig.model || {} as any).email || {} as any).jsonField
-    || 'email',
+      || ((nativeAuthConfig.model || {} as any).email || {} as any).jsonField
+      || 'email',
 
     emailVerifiedDb: ((options.model || {} as any).emailVerified || {} as any).dbField
-    || ((nativeAuthConfig.model || {} as any).emailVerified || {} as any).dbField
-    || 'emailVerified',
+      || ((nativeAuthConfig.model || {} as any).emailVerified || {} as any).dbField
+      || 'emailVerified',
 
     emailVerifiedJson: ((options.model || {} as any).emailVerified || {} as any).jsonField
-    || ((nativeAuthConfig.model || {} as any).emailVerified || {} as any).jsonField
-    || 'emailVerified',
+      || ((nativeAuthConfig.model || {} as any).emailVerified || {} as any).jsonField
+      || 'emailVerified',
 
     lastLoginDb: ((options.model || {} as any).passwordResetHash || {} as any).dbField
-    || ((nativeAuthConfig.model || {} as any).passwordResetHash || {} as any).dbField
-    || 'lastLogin',
+      || ((nativeAuthConfig.model || {} as any).passwordResetHash || {} as any).dbField
+      || 'lastLogin',
 
     passwordDb: ((options.model || {} as any).password || {} as any).dbField
-    || ((nativeAuthConfig.model || {} as any).password || {} as any).dbField
-    || 'pw',
+      || ((nativeAuthConfig.model || {} as any).password || {} as any).dbField
+      || 'pw',
 
     passwordResetHashDb: ((options.model || {} as any).passwordResetHash || {} as any).dbField
-    || ((nativeAuthConfig.model || {} as any).passwordResetHash || {} as any).dbField
-    || 'pwResetId',
+      || ((nativeAuthConfig.model || {} as any).passwordResetHash || {} as any).dbField
+      || 'pwResetId',
 
     passwordSetDateDb: ((options.model || {} as any).password || {} as any).dbField
-    || ((nativeAuthConfig.model || {} as any).password || {} as any).dbField
-    || 'pwSet',
+      || ((nativeAuthConfig.model || {} as any).password || {} as any).dbField
+      || 'pwSet',
 
     passwordStrengthDb: ((options.model || {} as any).passwordStrength || {} as any).dbField
-    || ((nativeAuthConfig.model || {} as any).passwordStrength || {} as any).dbField
-    || 'pwStrength'
+      || ((nativeAuthConfig.model || {} as any).passwordStrength || {} as any).dbField
+      || 'pwStrength'
 
   };
 
@@ -387,6 +357,10 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     }
   })
   class NativeAuthenticationAuthorityUser extends SapiModelMixin() {
+
+    @Id() @Json()
+    id: ObjectID;
+
     @Db(fields.emailDb) @Json(fields.emailJson)
     email: string;
 
@@ -414,6 +388,10 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
     }
   })
   class AuthenticationLog extends SapiModelMixin() {
+
+    @Id() @Json()
+    id: ObjectID;
+
     @Db('uid') @Json()
     userId: ObjectID;
 
@@ -678,7 +656,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
             });
         }
 
-        const user = await  NativeAuthenticationAuthorityUser.getOne(query);
+        const user = await NativeAuthenticationAuthorityUser.getOne(query);
 
         if (!user) {
           await options
@@ -1036,7 +1014,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           throw 403;
         }
 
-        const user = await  NativeAuthenticationAuthorityUser.getById(token.userId, {
+        const user = await NativeAuthenticationAuthorityUser.getById(token.userId, {
           [fields.passwordDb]: 1,
           [fields.passwordResetHashDb]: 1
         });
