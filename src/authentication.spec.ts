@@ -36,6 +36,7 @@ describe('addAuthenticationAuthority', () => {
     describe('changePassword', () => {
       const endpoint = '/auth/native/change-password';
       let onChangePasswordEmailRequestCalled = false;
+      let onBeforeChangePasswordCalled = false;
       let results: any;
 
       beforeEach(async () => {
@@ -47,6 +48,7 @@ describe('addAuthenticationAuthority', () => {
               bcryptHashRounds: 1,
               onChangePasswordEmailRequest: async (user, req, res, domain) => {
                 onChangePasswordEmailRequestCalled = true;
+                onBeforeChangePasswordCalled = true;
                 results = {domain, user};
               },
               onError
@@ -60,7 +62,10 @@ describe('addAuthenticationAuthority', () => {
 
       });
 
-      afterEach(() => onChangePasswordEmailRequestCalled = false);
+      afterEach(() => {
+        onChangePasswordEmailRequestCalled = false;
+        onBeforeChangePasswordCalled = false;
+      });
 
       it('returns 400 with invalid body', async () => {
         await request(sapi.app)
@@ -107,6 +112,26 @@ describe('addAuthenticationAuthority', () => {
           .expect(200);
 
         expect(onChangePasswordEmailRequestCalled).toBeTruthy();
+        expect(results.user).toBeDefined();
+        expect(results.user.email).toBe(TEST_EMAIL);
+        expect(results.domain).toBe(TEST_DOMAIN);
+
+      });
+
+      it('calls onBeforeChangePassword when provided', async () => {
+        await createTestUser(sapi);
+
+        await request(sapi.app)
+          .put(testUrl(endpoint, sapi))
+          .send({
+            currentPassword: TEST_PASSWORD,
+            domain: TEST_DOMAIN,
+            email: TEST_EMAIL,
+            newPassword: '123'
+          })
+          .expect(200);
+
+        expect(onBeforeChangePasswordCalled).toBeTruthy();
         expect(results.user).toBeDefined();
         expect(results.user.email).toBe(TEST_EMAIL);
         expect(results.domain).toBe(TEST_DOMAIN);
@@ -298,7 +323,9 @@ describe('addAuthenticationAuthority', () => {
         await sapi.listen({bootMessage: ''});
       });
 
-      afterEach(() => results = null);
+      afterEach(() => {
+        results = null;
+      });
 
       it('calls onForgotPasswordEmailRequest with  user & token null, allowing custom response code', async () => {
         const result = await request(sapi.app)
@@ -959,8 +986,8 @@ describe('addAuthenticationAuthority', () => {
         resolve([{
           audience: 'third-party-audience.com',
           token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' +
-            'eyJ1c2VyIjoiMTIzMTIzIiwiYXBpU2VjcmV0IjoiMzIxMzIxLTMyMS0zMjEtMzIxLTMyMSIsImlhdCI6MTQ4MTE0OTAwMn0.' +
-            'Ds_WzcGI4tVq2oqSical36Ej0L12BC6UA-yCUzAfnd4',
+          'eyJ1c2VyIjoiMTIzMTIzIiwiYXBpU2VjcmV0IjoiMzIxMzIxLTMyMS0zMjEtMzIxLTMyMSIsImlhdCI6MTQ4MTE0OTAwMn0.' +
+          'Ds_WzcGI4tVq2oqSical36Ej0L12BC6UA-yCUzAfnd4',
           unEncodedToken: {
             apiSecret: '321321-321-321-321-321',
             iat: 1481149002,
@@ -1037,7 +1064,7 @@ function createTestUser(sapi: SakuraApi, email = TEST_EMAIL, password = TEST_PAS
     });
 }
 
-function encryptToken(keyContent: { [key: string]: any }, sapi: SakuraApi): Promise<string> {
+function encryptToken(keyContent: {[key: string]: any}, sapi: SakuraApi): Promise<string> {
   return new Promise((resolve, reject) => {
     try {
       const iv = randomBytes(16);
