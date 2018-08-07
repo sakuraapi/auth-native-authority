@@ -1,6 +1,16 @@
 import {
-  Db, IAuthenticatorConstructor, Id, IRoutableLocals, Json, Model, Routable, Route, SakuraApi, SakuraApiPluginResult,
-  SapiModelMixin, SapiRoutableMixin
+  Db,
+  IAuthenticatorConstructor,
+  Id,
+  IRoutableLocals,
+  Json,
+  Model,
+  Routable,
+  Route,
+  SakuraApi,
+  SakuraApiPluginResult,
+  SapiModelMixin,
+  SapiRoutableMixin
 } from '@sakuraapi/core';
 import { compare, hash as bcryptHash } from 'bcrypt';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'crypto';
@@ -144,6 +154,12 @@ export interface IAuthenticationAuthorityOptions {
    * custom validation.
    */
   onBeforeUserCreate?: Handler | Handler[];
+
+  /**
+   * Accepts a Express Handler, or an array of them, to run before change password. This is helpful if you want to do
+   * custom validation.
+   */
+  onBeforeChangePassword?: Handler | Handler[];
 
   /**
    * Called when the user changes his or her password, allowing the integrator to send an email
@@ -304,48 +320,48 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
   // Model Field Name Configuration
   const fields = {
     domainDb: ((options.model || {} as any).domain || {} as any).dbField
-      || ((nativeAuthConfig.model || {} as any).domain || {} as any).dbField
-      || 'domain',
+    || ((nativeAuthConfig.model || {} as any).domain || {} as any).dbField
+    || 'domain',
 
     domainJson: ((options.model || {} as any).domain || {} as any).jsonField
-      || ((nativeAuthConfig.model || {} as any).domain || {} as any).jsonField
-      || 'domain',
+    || ((nativeAuthConfig.model || {} as any).domain || {} as any).jsonField
+    || 'domain',
 
     emailDb: ((options.model || {} as any).email || {} as any).dbField
-      || ((nativeAuthConfig.model || {} as any).email || {} as any).dbField
-      || 'email',
+    || ((nativeAuthConfig.model || {} as any).email || {} as any).dbField
+    || 'email',
 
     emailJson: ((options.model || {} as any).email || {} as any).jsonField
-      || ((nativeAuthConfig.model || {} as any).email || {} as any).jsonField
-      || 'email',
+    || ((nativeAuthConfig.model || {} as any).email || {} as any).jsonField
+    || 'email',
 
     emailVerifiedDb: ((options.model || {} as any).emailVerified || {} as any).dbField
-      || ((nativeAuthConfig.model || {} as any).emailVerified || {} as any).dbField
-      || 'emailVerified',
+    || ((nativeAuthConfig.model || {} as any).emailVerified || {} as any).dbField
+    || 'emailVerified',
 
     emailVerifiedJson: ((options.model || {} as any).emailVerified || {} as any).jsonField
-      || ((nativeAuthConfig.model || {} as any).emailVerified || {} as any).jsonField
-      || 'emailVerified',
+    || ((nativeAuthConfig.model || {} as any).emailVerified || {} as any).jsonField
+    || 'emailVerified',
 
     lastLoginDb: ((options.model || {} as any).passwordResetHash || {} as any).dbField
-      || ((nativeAuthConfig.model || {} as any).passwordResetHash || {} as any).dbField
-      || 'lastLogin',
+    || ((nativeAuthConfig.model || {} as any).passwordResetHash || {} as any).dbField
+    || 'lastLogin',
 
     passwordDb: ((options.model || {} as any).password || {} as any).dbField
-      || ((nativeAuthConfig.model || {} as any).password || {} as any).dbField
-      || 'pw',
+    || ((nativeAuthConfig.model || {} as any).password || {} as any).dbField
+    || 'pw',
 
     passwordResetHashDb: ((options.model || {} as any).passwordResetHash || {} as any).dbField
-      || ((nativeAuthConfig.model || {} as any).passwordResetHash || {} as any).dbField
-      || 'pwResetId',
+    || ((nativeAuthConfig.model || {} as any).passwordResetHash || {} as any).dbField
+    || 'pwResetId',
 
     passwordSetDateDb: ((options.model || {} as any).password || {} as any).dbField
-      || ((nativeAuthConfig.model || {} as any).password || {} as any).dbField
-      || 'pwSet',
+    || ((nativeAuthConfig.model || {} as any).password || {} as any).dbField
+    || 'pwSet',
 
     passwordStrengthDb: ((options.model || {} as any).passwordStrength || {} as any).dbField
-      || ((nativeAuthConfig.model || {} as any).passwordStrength || {} as any).dbField
-      || 'pwStrength'
+    || ((nativeAuthConfig.model || {} as any).passwordStrength || {} as any).dbField
+    || 'pwStrength'
 
   };
 
@@ -437,6 +453,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
      */
     @Route({
       authenticator: options.authenticator,
+      before: (options.onBeforeChangePassword as any),
       method: 'put',
       path: endpoints.changePassword || 'auth/native/change-password'
     })
@@ -1052,7 +1069,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       }
     }
 
-    private encryptToken(keyContent: { [key: string]: any }): Promise<string> {
+    private encryptToken(keyContent: {[key: string]: any}): Promise<string> {
       return new Promise((resolve, reject) => {
         try {
           const iv = randomBytes(IV_LENGTH);
