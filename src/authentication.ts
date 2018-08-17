@@ -4,12 +4,15 @@ import {
 } from '@sakuraapi/core';
 import { compare, hash as bcryptHash } from 'bcrypt';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'crypto';
+import * as debugInit from 'debug';
 import { Handler, NextFunction, Request, Response } from 'express';
 import { decode as decodeToken, sign as signToken } from 'jsonwebtoken';
 import { ObjectID } from 'mongodb';
 import { decode as urlBase64Decode, encode as urlBase64Encode, validate as urlBase64Validate } from 'urlsafe-base64';
 import { v4 as uuid } from 'uuid';
 import * as pwStrength from 'zxcvbn';
+
+const debug = debugInit('sapi:auth-native-authority');
 
 const IV_LENGTH = 16;
 
@@ -146,6 +149,12 @@ export interface IAuthenticationAuthorityOptions {
   onBeforeUserCreate?: Handler | Handler[];
 
   /**
+   * Accepts a Express Handler, or an array of them, to run before change password. This is helpful if you want to do
+   * custom validation.
+   */
+  onBeforeChangePassword?: Handler | Handler[];
+
+  /**
    * Called when the user changes his or her password, allowing the integrator to send an email
    * to the user notifying them of the password change.
    * @param user the user requesting the password change
@@ -265,6 +274,9 @@ export interface IAuthenticationAuthorityOptions {
  */
 export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthenticationAuthorityOptions): SakuraApiPluginResult {
 
+  debug('.addAuthenticationAuthority called');
+  debug('options:', options);
+
   const endpoints = options.endpoints || {};
 
   if (!sapi) {
@@ -348,6 +360,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       || 'pwStrength'
 
   };
+
+  debug('fields', fields);
 
   @Model({
     dbConfig: {
@@ -437,10 +451,13 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
      */
     @Route({
       authenticator: options.authenticator,
+      before: (options.onBeforeChangePassword as any),
       method: 'put',
       path: endpoints.changePassword || 'auth/native/change-password'
     })
     async changePassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+      debug('.changePassword called');
+
       const locals = res.locals as IRoutableLocals;
 
       const email = `${locals.reqBody.email}`;
@@ -504,6 +521,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       method: 'post', path: endpoints.create || 'auth/native'
     })
     async create(req: Request, res: Response, next: NextFunction): Promise<void> {
+      debug('.create called');
+
       const locals = res.locals as IRoutableLocals;
       const customFields = (options.create || {} as any).acceptFields
         || (((sapi.config.authentication || {} as any).native || {} as any).create || {} as any).acceptFields;
@@ -589,6 +608,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       path: endpoints.emailVerification || 'auth/native/confirm/:token'
     })
     async emailVerification(req: Request, res: Response, next: NextFunction): Promise<void> {
+      debug('.emailVerification called');
+
       const locals = res.locals as IRoutableLocals;
 
       try {
@@ -633,6 +654,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       path: endpoints.forgotPassword || 'auth/native/forgot-password'
     })
     async forgotPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+      debug('.forgotPassword called');
+
       const locals = res.locals as IRoutableLocals;
 
       const email = `${locals.reqBody.email}`;
@@ -705,12 +728,17 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       path: endpoints.login || 'auth/native/login'
     })
     async login(req: Request, res: Response, next: NextFunction): Promise<void> {
+      debug('.login called');
 
       const locals = res.locals as IRoutableLocals;
 
       const email = `${locals.reqBody.email}`;
       const password = `${locals.reqBody.password}`;
       const domain = `${locals.reqBody.domain || options.defaultDomain || nativeAuthConfig.defaultDomain}`;
+
+      debug('email: ', email);
+      debug('password: ', password);
+      debug('domain: ', domain);
 
       if (!email || email === 'undefined') {
         locals.send(400, {error: 'email address is invalid, check body'});
@@ -728,12 +756,18 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           [fields.domainDb]: domain
         };
 
+        debug('query: ', query);
+
         const dbDoc = await NativeAuthenticationAuthorityUser
           .getCursor(query)
           .limit(1)
           .next();
 
+        debug('query result: ', dbDoc);
+
         const userInfo = await NativeAuthenticationAuthorityUser.fromDb(dbDoc);
+
+        debug('userInfo: ', userInfo);
 
         if (!userInfo) {
           locals.send(401, {error: 'login_failed'});
@@ -757,6 +791,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           [fields.domainJson]: domain
         };
 
+        debug('payload: ', payload);
+
         // Allows the inclusion of other fields from the User collection
         const fieldInclusion = ((sapi.config.authentication || {} as any).jwt || {} as any).fields;
         if (fieldInclusion) {
@@ -777,13 +813,21 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           payload = await options.onJWTPayloadInject(payload, dbDoc, domain);
         }
 
+        debug('payload: ', payload);
+
         const token = await buildJwtToken(payload, userInfo);
 
+        debug('token: ', token);
+
         if (options.onLoginSuccess) {
+          debug('calling onLoginSuccess');
           await options.onLoginSuccess(userInfo, token, sapi, req, res, domain);
         }
 
+        debug('sending 200 OK');
         locals.send(200, {token});
+
+        debug('saving userInfo: ', userInfo);
         await userInfo.save({[fields.lastLoginDb]: new Date()});
 
         next();
@@ -818,6 +862,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
        * being the JWT token signed for that audience server.
        */
       async function buildJwtToken(payload: any, userInfo: NativeAuthenticationAuthorityUser): Promise<any> {
+        debug('.buildJwtToken called');
+
         const key = jwtAuthConfig.key;
         const issuer = jwtAuthConfig.issuer;
         const exp = jwtAuthConfig.exp || '48h';
@@ -912,6 +958,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           logAuth.jwTokenId = jti;
           logAuth.created = new Date();
 
+          debug('logAuth create: ', logAuth);
           await logAuth.create();
           return token;
 
@@ -952,6 +999,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       path: endpoints.newEmailVerificationKey || 'auth/native/confirm'
     })
     async newEmailVerificationKey(req: Request, res: Response, next: NextFunction): Promise<void> {
+      debug('.newEmailVerificationKey called');
+
       const locals = res.locals as IRoutableLocals;
 
       const email = `${locals.reqBody.email}`;
@@ -993,6 +1042,8 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       path: endpoints.resetPassword || 'auth/native/reset-password/:token'
     })
     async resetPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+      debug('.resetPassword called');
+
       const locals = res.locals as IRoutableLocals;
 
       const password = `${locals.reqBody.password}`;
