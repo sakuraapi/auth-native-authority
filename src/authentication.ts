@@ -935,18 +935,14 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       async function buildJwtToken(payload: any, userInfo: NativeAuthenticationAuthorityUser, domain?: string): Promise<any> {
         debug('.buildJwtToken called');
 
-        let key = '';
-        let issuer = '';
+        let key = jwtAuthConfig.key;
+        let issuer = jwtAuthConfig.issuer;
+
         if (domain && jwtAuthConfig.domainedAudiences) {
           key = jwtAuthConfig.domainedAudiences[domain].key;
           issuer = jwtAuthConfig.domainedAudiences[domain].issuer;
         }
-        if (!key) {
-          key = jwtAuthConfig.key;
-        }
-        if (!issuer) {
-          issuer = jwtAuthConfig.issuer;
-        }
+
         const exp = jwtAuthConfig.exp || '48h';
 
         try {
