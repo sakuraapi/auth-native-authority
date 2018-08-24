@@ -392,14 +392,11 @@ describe('addAuthenticationAuthority', () => {
         newUser: null
       };
 
-      function onUserCreated(newUser: any, emailVerificationKey: string, domain?: string, req?: Request, res?: Response) {
+      function onUserCreated(newUser: any, emailVerificationKey: string, req?: Request, res?: Response) {
         userCreateMeta = {
           emailVerificationKey,
           newUser
         };
-        if (domain) {
-          userCreateMeta['domain'] = domain;
-        }
       }
 
       describe('response behavior', () => {

@@ -699,7 +699,6 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
         if (!user.emailVerified) {
           await user.save({[fields.emailVerifiedDb]: true});
-
         }
 
         next();
