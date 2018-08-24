@@ -662,41 +662,36 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       debug('.emailVerification called');
 
       const locals = res.locals as IRoutableLocals;
-      const domain = req.params.domain || '';
+      const domain = `${req.params.domain || locals.reqBody.domain || options.defaultDomain || nativeAuthConfig.defaultDomain}`;
+
       debug('locals.reqBody', locals.reqBody);
       try {
+
         const tokenParts = req.params.token.split('.');
         if (tokenParts && tokenParts.length !== 3) {
           throw 403;
         }
-        let user = new NativeAuthenticationAuthorityUser();
+
+        let user: NativeAuthenticationAuthorityUser;
+        let key: string;
+
         if (jwtAuthConfig.key) {
-          const token = await this.decryptToken(tokenParts, jwtAuthConfig.key);
-          user = await NativeAuthenticationAuthorityUser.getById(token.userId, {[fields.emailVerifiedDb]: 1});
+          key = jwtAuthConfig.key;
         }
+
         // try all the issuer-keys in the domains
         if (domain && jwtAuthConfig.domainedAudiences) {
-          const domains = Object.keys(jwtAuthConfig.domainedAudiences);
-          for (const dom of domains) {
-            debug('domain', domain);
-            // need to async this
-            const key = jwtAuthConfig.domainedAudiences[dom].key;
-            try {
-              const token = await this.decryptToken(tokenParts, key);
-              debug('token', token);
-              user = await NativeAuthenticationAuthorityUser.getById(token.userId, {[fields.emailVerifiedDb]: 1});
-              if (user) {
-                if (dom === domain) {
-                  break;
-                } else {
-                  user = new NativeAuthenticationAuthorityUser();
-                }
-              }
-            } catch {
-              continue;
-            }
-          }
+          key = jwtAuthConfig.domainedAudiences[domain].key;
         }
+
+        let token;
+        try {
+          token = await this.decryptToken(tokenParts, key);
+        } catch {
+          throw 403;
+        }
+
+        user = await NativeAuthenticationAuthorityUser.getById(token.userId, {[fields.emailVerifiedDb]: 1});
 
         if (!user) {
           throw 403;
@@ -704,6 +699,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
         if (!user.emailVerified) {
           await user.save({[fields.emailVerifiedDb]: true});
+
         }
 
         next();
@@ -713,7 +709,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           return next();
         }
 
-        locals.send(500, {error: 'internal_server_error'});
+        locals.send(403, {error: 'invalid_token'});
 
         if (options.onError) {
           await options.onError(err);
