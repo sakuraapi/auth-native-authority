@@ -12,14 +12,14 @@ import {
   SapiModelMixin,
   SapiRoutableMixin
 } from '@sakuraapi/core';
-import {compare, hash as bcryptHash} from 'bcrypt';
-import {createCipheriv, createDecipheriv, createHash, createHmac, randomBytes} from 'crypto';
+import { compare, hash as bcryptHash } from 'bcrypt';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'crypto';
 import * as debugInit from 'debug';
-import {Handler, NextFunction, Request, Response} from 'express';
-import {decode as decodeToken, sign as signToken} from 'jsonwebtoken';
-import {ObjectID} from 'mongodb';
-import {decode as urlBase64Decode, encode as urlBase64Encode, validate as urlBase64Validate} from 'urlsafe-base64';
-import {v4 as uuid} from 'uuid';
+import { Handler, NextFunction, Request, Response } from 'express';
+import { decode as decodeToken, sign as signToken } from 'jsonwebtoken';
+import { ObjectID } from 'mongodb';
+import { decode as urlBase64Decode, encode as urlBase64Encode, validate as urlBase64Validate } from 'urlsafe-base64';
+import { v4 as uuid } from 'uuid';
 import * as pwStrength from 'zxcvbn';
 
 const debug = debugInit('sapi:auth-native-authority');

@@ -1,11 +1,11 @@
-import {IRoutableLocals, SakuraApi} from '@sakuraapi/core';
-import {createCipheriv, randomBytes} from 'crypto';
-import {Request, Response} from 'express';
-import {agent as request} from 'supertest';
-import {encode as urlBase64Encode} from 'urlsafe-base64';
-import {dbs} from '../spec/helpers/db';
-import {testSapi, testUrl} from '../spec/helpers/sakura-api';
-import {addAuthenticationAuthority, ICustomTokenResult} from './authentication';
+import { IRoutableLocals, SakuraApi } from '@sakuraapi/core';
+import { createCipheriv, randomBytes } from 'crypto';
+import { Request, Response } from 'express';
+import { agent as request } from 'supertest';
+import { encode as urlBase64Encode } from 'urlsafe-base64';
+import { dbs } from '../spec/helpers/db';
+import { testSapi, testUrl } from '../spec/helpers/sakura-api';
+import { addAuthenticationAuthority, ICustomTokenResult } from './authentication';
 
 const TEST_DOMAIN = 'default';
 const TEST_EMAIL = 'sakura-test@sakuraapi.com';
