@@ -615,16 +615,21 @@ describe('addAuthenticationAuthority', () => {
             .expect(777);
         });
       });
-
       describe('domained-audiences configuration', () => {
-
+        let userCreateResults;
         const sapiConfig = {
-          // configPath: 'lib/spec/config/environment-test-domained.json',
+          //configPath: 'lib/spec/config/environment-test-domained.json',
           models: [],
           plugins: [{
             options: {
               bcryptHashRounds: 1,
-              onUserCreated,
+              onUserCreated: async (newUser: any, emailVerificationKey: string, req?: Request, res?: Response, domain?: string) => {
+                userCreateResults = {
+                  domain,
+                  newUser,
+                  emailVerificationKey
+                };
+              },
               onError
             },
             plugin: addAuthenticationAuthority
@@ -640,7 +645,7 @@ describe('addAuthenticationAuthority', () => {
 
           await createTestUser(sapi, TEST_EMAIL, TEST_PASSWORD, domain);
           await request(sapi.app)
-            .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
+            .get(testUrl(`/auth/native/confirm/${userCreateResults.emailVerificationKey}/${domain}`, sapi))
             .expect(200);
 
           const result: any = await request(sapi.app)
@@ -669,7 +674,7 @@ describe('addAuthenticationAuthority', () => {
 
           await createTestUser(sapi, TEST_EMAIL, TEST_PASSWORD, domain);
           await request(sapi.app)
-            .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
+            .get(testUrl(`/auth/native/confirm/${userCreateResults.emailVerificationKey}/${domain}`, sapi))
             .expect(200);
 
           const result: any = await request(sapi.app)
@@ -688,65 +693,6 @@ describe('addAuthenticationAuthority', () => {
           expect(token.audience1).toBeUndefined('audience1 should not have been included for this domain');
           expect(token.audience2).toBeUndefined('audience2 should not have been included for this domain');
         });
-
-        it('returns only issuer token if no domain match', async () => {
-          sapi = testSapi({configPath: 'lib/spec/config/environment-test-domained.json', ...sapiConfig});
-          await sapi.listen({bootMessage: ''});
-
-          const domain = 'non-existent';
-
-          await createTestUser(sapi, TEST_EMAIL, TEST_PASSWORD, domain);
-          await request(sapi.app)
-            .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
-            .expect(200);
-
-          const result: any = await request(sapi.app)
-            .post(testUrl('/auth/native/login', sapi))
-            .send({
-              domain,
-              email: TEST_EMAIL,
-              password: TEST_PASSWORD
-            })
-            .expect(200);
-
-          const token = result.body.token;
-
-          expect(token['domained-test-issuer'].split('.').length).toBe(3, 'the issuer should have returned its own token');
-          expect(token.audience3).toBeUndefined('audience3 should not have been included for this domain');
-          expect(token.audience1).toBeUndefined('audience1 should not have been included for this domain');
-          expect(token.audience2).toBeUndefined('audience2 should not have been included for this domain');
-        });
-
-        it('only returns issuer if both audiences and domainedAudiences are not defined', async () => {
-          sapi = testSapi({configPath: 'lib/spec/config/environment-test-domained2.json', ...sapiConfig});
-          await sapi
-            .listen({bootMessage: ''});
-
-          const domain = 'domain2';
-
-          await createTestUser(sapi, TEST_EMAIL, TEST_PASSWORD, domain);
-          await request(sapi.app)
-            .get(testUrl(`/auth/native/confirm/${userCreateMeta.emailVerificationKey}`, sapi))
-            .expect(200);
-
-          const result: any = await request(sapi.app)
-            .post(testUrl('/auth/native/login', sapi))
-            .send({
-              domain,
-              email: TEST_EMAIL,
-              password: TEST_PASSWORD
-            })
-            .expect(200);
-
-          const token = result.body.token;
-
-          expect(token['domained-test-issuer'].split('.').length).toBe(3, 'the issuer should have returned its own token');
-          expect(token.audience1).toBeUndefined('audience1 should not have been included for this domain');
-          expect(token.audience2).toBeUndefined('audience2 should not have been included for this domain');
-          expect(token.audience3).toBeUndefined('audience3 should not have been included for this domain');
-
-        });
-
       });
     });
 
@@ -799,7 +745,6 @@ describe('addAuthenticationAuthority', () => {
       it('generates key for valid user', async () => {
 
         const user = await createTestUser(sapi);
-
         const result: any = await request(sapi.app)
           .post(testUrl(endpoint, sapi))
           .send({
@@ -986,8 +931,8 @@ describe('addAuthenticationAuthority', () => {
         resolve([{
           audience: 'third-party-audience.com',
           token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' +
-          'eyJ1c2VyIjoiMTIzMTIzIiwiYXBpU2VjcmV0IjoiMzIxMzIxLTMyMS0zMjEtMzIxLTMyMSIsImlhdCI6MTQ4MTE0OTAwMn0.' +
-          'Ds_WzcGI4tVq2oqSical36Ej0L12BC6UA-yCUzAfnd4',
+            'eyJ1c2VyIjoiMTIzMTIzIiwiYXBpU2VjcmV0IjoiMzIxMzIxLTMyMS0zMjEtMzIxLTMyMSIsImlhdCI6MTQ4MTE0OTAwMn0.' +
+            'Ds_WzcGI4tVq2oqSical36Ej0L12BC6UA-yCUzAfnd4',
           unEncodedToken: {
             apiSecret: '321321-321-321-321-321',
             iat: 1481149002,
@@ -1064,7 +1009,7 @@ function createTestUser(sapi: SakuraApi, email = TEST_EMAIL, password = TEST_PAS
     });
 }
 
-function encryptToken(keyContent: {[key: string]: any}, sapi: SakuraApi): Promise<string> {
+function encryptToken(keyContent: { [key: string]: any }, sapi: SakuraApi): Promise<string> {
   return new Promise((resolve, reject) => {
     try {
       const iv = randomBytes(16);

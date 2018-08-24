@@ -1,6 +1,16 @@
 import {
-  Db, IAuthenticatorConstructor, Id, IRoutableLocals, Json, Model, Routable, Route, SakuraApi, SakuraApiPluginResult,
-  SapiModelMixin, SapiRoutableMixin
+  Db,
+  IAuthenticatorConstructor,
+  Id,
+  IRoutableLocals,
+  Json,
+  Model,
+  Routable,
+  Route,
+  SakuraApi,
+  SakuraApiPluginResult,
+  SapiModelMixin,
+  SapiRoutableMixin
 } from '@sakuraapi/core';
 import { compare, hash as bcryptHash } from 'bcrypt';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'crypto';
@@ -33,6 +43,17 @@ export interface ICustomTokenResult {
    * If you include `unEncodedToken`, it will log that. Otherwise, it logs the encoded token.
    */
   unEncodedToken?: any;
+}
+
+/**
+ * Domained audiences
+ */
+export interface IAudiences {
+  [domain: string]: {
+    [server: string]: string,
+    issuer: string,
+    key: string
+  };
 }
 
 /**
@@ -291,6 +312,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
   // note: dbConfig for models below will always come from options, not from JSON config
   const nativeAuthConfig = ((sapi.config.authentication || {} as any).native || null) as IAuthenticationAuthorityOptions;
   const jwtAuthConfig = (sapi.config.authentication || {} as any).jwt || null;
+  debug('jwtAuthConfig ', jwtAuthConfig);
 
   if (!nativeAuthConfig) {
     throw new Error('auth-native-authority requires SakuraApi\'s configuration to have ' +
@@ -302,13 +324,27 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
   }
 
   if (!jwtAuthConfig.key) {
-    throw new Error('auth-native-authority requires SakuraApi\'s configuration to have `authentication.jwt.key` set ' +
-      'to a valid AES 256 private key');
-  }
-
-  if (jwtAuthConfig.key.length !== 32) {
-    throw new Error('auth-native-authority requires SakuraApi\'s configuration\'s `authentication.jwt.key` to be ' +
-      `be 32 characters long. The provided key is ${jwtAuthConfig.key.length} characters long`);
+    if (jwtAuthConfig.domainedAudiences) {
+      const domains = Object.keys(jwtAuthConfig.domainedAudiences);
+      for (const domain of domains) {
+        if (!jwtAuthConfig.domainedAudiences[domain].key) {
+          throw new Error('auth-native-authority requires SakuraApi\'s configuration to have `authentication.jwt.key` ' +
+            'set to a valid AES 256 private key');
+        } else {
+          debug('jwtAuthConfig.domainedAudiences[domain].key', jwtAuthConfig.domainedAudiences[domain].key);
+          if (jwtAuthConfig.domainedAudiences[domain].key.length !== 32) {
+            throw new Error('auth-native-authority requires SakuraApi\'s configuration\'s `authentication.jwt.key` to be ' +
+              `be 32 characters long. The key for ${domain} is ${jwtAuthConfig.key.length} characters long`);
+          }
+        }
+      }
+    }
+  } else {
+    debug('jwtAuthConfig.key', jwtAuthConfig.key);
+    if (jwtAuthConfig.key.length !== 32) {
+      throw new Error('auth-native-authority requires SakuraApi\'s configuration\'s `authentication.jwt.key` to be ' +
+        `be 32 characters long. The provided key is ${jwtAuthConfig.key.length} characters long`);
+    }
   }
 
   const bcryptHashRounds = options.bcryptHashRounds || nativeAuthConfig.bcryptHashRounds || 12;
@@ -541,6 +577,14 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         return next();
       }
 
+      if (domain && jwtAuthConfig.domainedAudiences) {
+        const domains = Object.keys(jwtAuthConfig.domainedAudiences);
+        if (domains.indexOf(domain) < 0) {
+          locals.send(400, {error: 'domain does not exist'});
+          return next();
+        }
+      }
+
       try {
 
         const existingUser = await NativeAuthenticationAuthorityUser
@@ -578,9 +622,16 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
         user.passwordStrength = this.getPasswordStrength(password, user);
 
         await user.create();
-        const emailVerificationKey = await this.encryptToken({userId: user.id});
+        let domainKey = '';
+        if (domain && jwtAuthConfig.domainedAudiences && jwtAuthConfig.domainedAudiences[domain]) {
+          domainKey = jwtAuthConfig.domainedAudiences[domain].key;
+        }
+        const encryptionKey = jwtAuthConfig.key || domainKey;
+        debug('encryptionKey', encryptionKey);
+        const emailVerificationKey = await this.encryptToken({userId: user.id}, encryptionKey);
 
         if (options.onUserCreated && typeof options.onUserCreated === 'function') {
+          debug('.onUserCreated triggered');
           await options.onUserCreated(user.toJson(), emailVerificationKey, req, res, domain);
         }
 
@@ -605,21 +656,42 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
      */
     @Route({
       method: 'get',
-      path: endpoints.emailVerification || 'auth/native/confirm/:token'
+      path: endpoints.emailVerification || 'auth/native/confirm/:token/:domain?'
     })
     async emailVerification(req: Request, res: Response, next: NextFunction): Promise<void> {
       debug('.emailVerification called');
 
       const locals = res.locals as IRoutableLocals;
+      const domain = `${req.params.domain || locals.reqBody.domain || options.defaultDomain || nativeAuthConfig.defaultDomain}`;
 
+      debug('locals.reqBody', locals.reqBody);
       try {
+
         const tokenParts = req.params.token.split('.');
         if (tokenParts && tokenParts.length !== 3) {
           throw 403;
         }
 
-        const token = await this.decryptToken(tokenParts);
-        const user = await NativeAuthenticationAuthorityUser.getById(token.userId, {[fields.emailVerifiedDb]: 1});
+        let user: NativeAuthenticationAuthorityUser;
+        let key: string;
+
+        if (jwtAuthConfig.key) {
+          key = jwtAuthConfig.key;
+        }
+
+        // try all the issuer-keys in the domains
+        if (domain && jwtAuthConfig.domainedAudiences) {
+          key = jwtAuthConfig.domainedAudiences[domain].key;
+        }
+
+        let token;
+        try {
+          token = await this.decryptToken(tokenParts, key);
+        } catch {
+          throw 403;
+        }
+
+        user = await NativeAuthenticationAuthorityUser.getById(token.userId, {[fields.emailVerifiedDb]: 1});
 
         if (!user) {
           throw 403;
@@ -636,7 +708,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           return next();
         }
 
-        locals.send(500, {error: 'internal_server_error'});
+        locals.send(403, {error: 'invalid_token'});
 
         if (options.onError) {
           await options.onError(err);
@@ -791,8 +863,6 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           [fields.domainJson]: domain
         };
 
-        debug('payload: ', payload);
-
         // Allows the inclusion of other fields from the User collection
         const fieldInclusion = ((sapi.config.authentication || {} as any).jwt || {} as any).fields;
         if (fieldInclusion) {
@@ -815,7 +885,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
         debug('payload: ', payload);
 
-        const token = await buildJwtToken(payload, userInfo);
+        const token = await buildJwtToken(payload, userInfo, domain);
 
         debug('token: ', token);
 
@@ -861,11 +931,17 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
        * @returns {any} An object with each of its properties representing an audience server and each of the values
        * being the JWT token signed for that audience server.
        */
-      async function buildJwtToken(payload: any, userInfo: NativeAuthenticationAuthorityUser): Promise<any> {
+      async function buildJwtToken(payload: any, userInfo: NativeAuthenticationAuthorityUser, domain?: string): Promise<any> {
         debug('.buildJwtToken called');
 
-        const key = jwtAuthConfig.key;
-        const issuer = jwtAuthConfig.issuer;
+        let key = jwtAuthConfig.key;
+        let issuer = jwtAuthConfig.issuer;
+
+        if (domain && jwtAuthConfig.domainedAudiences) {
+          key = jwtAuthConfig.domainedAudiences[domain].key;
+          issuer = jwtAuthConfig.domainedAudiences[domain].issuer;
+        }
+
         const exp = jwtAuthConfig.exp || '48h';
 
         try {
@@ -901,6 +977,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           } else if (jwtAuthConfig.audiences) {
             audienceConfig = jwtAuthConfig.audiences;
           }
+          debug('audienceConfig', audienceConfig);
 
           if (audienceConfig) {
             const keys = Object.keys(audienceConfig);
@@ -910,9 +987,10 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
                 throw new Error('Invalid authentication.jwt.audiences key defined. The value must be a '
                   + 'secret key in the form of a string.');
               }
-
-              wait.push(generateToken(audienceKey, issuer, jwtAudience, exp, payload, jti));
-              audiences.push(jwtAudience);
+              if (jwtAudience !== 'issuer' && jwtAudience !== 'key') {
+                wait.push(generateToken(audienceKey, issuer, jwtAudience, exp, payload, jti));
+                audiences.push(jwtAudience);
+              }
             }
           }
 
@@ -969,6 +1047,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
       function generateToken(key: string, issuer: string, audience: string,
                              exp: string, payload: any, jti: string): Promise<string> {
+        debug('.generateToken called');
         return new Promise((resolve, reject) => {
           signToken(payload,
             key,
@@ -1013,7 +1092,6 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
       try {
         const user = await NativeAuthenticationAuthorityUser.getOne(query);
-
         const key = (user)
           ? await this.encryptToken({userId: user.id})
           : '';
@@ -1103,14 +1181,23 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       }
     }
 
-    private encryptToken(keyContent: { [key: string]: any }): Promise<string> {
+    private encryptToken(keyContent: { [key: string]: any }, encryptionKey?: string): Promise<string> {
+      debug('.encryptToken called ');
+      debug('encryptionkey1', encryptionKey);
+      if (!encryptionKey) {
+        if (!jwtAuthConfig.key) {
+          throw new Error('no encryption key');
+        } else {
+          encryptionKey = jwtAuthConfig.key;
+        }
+      }
       return new Promise((resolve, reject) => {
         try {
           const iv = randomBytes(IV_LENGTH);
           let cipher;
-
+          debug('encryptionkey2', encryptionKey);
           try {
-            cipher = createCipheriv('aes-256-gcm', jwtAuthConfig.key, iv);
+            cipher = createCipheriv('aes-256-gcm', encryptionKey, iv);
           } catch (err) {
             throw new Error(`Invalid JWT private key set in SakuraApi's authorization.jwt.key setting: ${err}`);
           }
@@ -1128,7 +1215,16 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
       });
     }
 
-    private decryptToken(tokenParts: any[]): Promise<any> {
+    private decryptToken(tokenParts: any[], decryptionKey?: string): Promise<any> {
+      debug('.decryptToken called. key is ', decryptionKey);
+      if (!decryptionKey) {
+        if (!jwtAuthConfig.key) {
+          throw new Error('no decryption key');
+        } else {
+          decryptionKey = jwtAuthConfig.key;
+        }
+      }
+
       return new Promise((resolve, reject) => {
         const tokenBase64 = tokenParts[0];
         const hmacBase64 = tokenParts[1];
@@ -1144,7 +1240,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
         let token;
         try {
-          const decipher = createDecipheriv('aes-256-gcm', jwtAuthConfig.key, ivBuffer);
+          const decipher = createDecipheriv('aes-256-gcm', decryptionKey, ivBuffer);
           decipher.setAuthTag(hmacBuffer);
           const tokenBuffer = Buffer.concat([
             decipher.update(encryptedToken),
