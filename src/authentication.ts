@@ -18,7 +18,7 @@ import * as debugInit from 'debug';
 import { Handler, NextFunction, Request, Response } from 'express';
 import { decode as decodeToken, sign as signToken } from 'jsonwebtoken';
 import { ObjectID } from 'mongodb';
-import { decode as urlBase64Decode, encode as urlBase64Encode, validate as urlBase64Validate } from 'urlsafe-base64';
+import { encode as urlBase64Encode, validate as urlBase64Validate } from 'urlsafe-base64';
 import { v4 as uuid } from 'uuid';
 import * as pwStrength from 'zxcvbn';
 
@@ -1234,9 +1234,9 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           return reject(403);
         }
 
-        const encryptedToken = urlBase64Decode(tokenBase64);
-        const hmacBuffer = urlBase64Decode(hmacBase64);
-        const ivBuffer = urlBase64Decode(ivBase64);
+        const encryptedToken = this.urlBase64Decode(tokenBase64);
+        const hmacBuffer = this.urlBase64Decode(hmacBase64);
+        const ivBuffer = this.urlBase64Decode(ivBase64);
 
         let token;
         try {
@@ -1252,6 +1252,15 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
           return reject(403);
         }
       });
+    }
+
+    private urlBase64Decode(encoded: string): Buffer {
+      const remainder = encoded.length % 4;
+      encoded += remainder === 2 ? '==' : remainder === 3 ? '=' : '';
+      encoded = encoded
+        .replace(/\-/g, '+')
+        .replace(/\_/g, '/');
+      return Buffer.from(encoded, 'base64');
     }
 
     private hashToken(token): string {
