@@ -841,7 +841,7 @@ export function addAuthenticationAuthority(sapi: SakuraApi, options: IAuthentica
 
         debug('userInfo: ', userInfo);
 
-        if (!userInfo) {
+        if (!userInfo || !userInfo.password) {
           locals.send(401, {error: 'login_failed'});
           throw 401;
         }
